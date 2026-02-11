@@ -347,7 +347,7 @@ class GurobiPortfolioOptimizer:
 
         return self.strat_max_share(steps=100)
     
-    def strat_max_investability(self, warm_start_data=None, min_improvement=1e-6):
+    def strat_max_investability(self, warm_start_data=None, min_improvement=1e-4):
         """
         Maximizes investability (wc). 
         If no candidate can beat the parents (Infeasible), returns the optimal 
@@ -356,11 +356,18 @@ class GurobiPortfolioOptimizer:
 
         # --- STEP 0: Solve Benchmark (Parents Only) & Prepare Fallback ---
         # We need the full details of the benchmark to use as a fallback.
-        bench_util, _, _ = self._solve_parent_benchmark()
-        
+        bench_util_low, _, _ = self._solve_parent_benchmark()
+        bench_util_up = self.strat_B4P()["mean_variance"]
+
+        if abs(bench_util_up - bench_util_low) < 1e-5:
+            #print('Max-share = 0')
+            return bench_util_up
 
         # If we can't improve by at least epsilon, the solver will be infeasible.
-        target_utility = bench_util + min_improvement
+        if bench_util_low > 0:
+            target_utility = bench_util_low * (1 + min_improvement)
+        else:
+            target_utility = bench_util_low * (1 - min_improvement)
 
         m = gp.Model("Max_Investability_Robust")
         
@@ -369,7 +376,7 @@ class GurobiPortfolioOptimizer:
         m.setParam("NonConvex", 2)
         m.setParam("MIPFocus", 3)
         m.setParam("NumericFocus", 1)
-        m.setParam("TimeLimit", 120)
+        #m.setParam("TimeLimit", 120)
 
         # ... (Define Variables & Constraints exactly as before) ...
        # --- Constants & Scaling ---
@@ -498,6 +505,7 @@ class GurobiPortfolioOptimizer:
             return self._build_result(g_opt, w_opt)
         elif m.Status == GRB.INFEASIBLE:
             m.remove(utility_constraint)
+            print('removed utility constraint')
             m.optimize()
             if m.Status == GRB.OPTIMAL:
                 #print('Removed utility constraint')

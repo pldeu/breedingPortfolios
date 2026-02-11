@@ -700,7 +700,7 @@ class ExperimentRunner:
 
             def strat_max_investability(grid):
                 """Maximize Candidate Share (Adaptation)."""
-                return None, grid['optimizer'].strat_max_investability()
+                return None, grid['optimizer'].strat_max_investability(min_improvement=1e-4)
 
             def strat_BB(grid):
                 """BeatBest: Standalone Max."""
