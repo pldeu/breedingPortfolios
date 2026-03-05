@@ -84,12 +84,12 @@ with st.sidebar:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Fixed Asset**")
-        gfx = st.slider("X", -1.0, 1.0, 0.6, 0.05, key="g_fixed_x")
-        gfy = st.slider("Y", -1.0, 1.0, 0.2, 0.05, key="g_fixed_y")
+        gfx = st.slider("X", 0.0, 1.0, 0.6, 0.05, key="g_fixed_x")
+        gfy = st.slider("Y", 0.0, 1.0, 0.2, 0.05, key="g_fixed_y")
     with col2:
         st.markdown("**Mutable Asset**")
-        gmx = st.slider("X", -1.0, 1.0, -0.1, 0.05, key="g_mut_x")
-        gmy = st.slider("Y", -1.0, 1.0, 0.2, 0.05, key="g_mut_y")
+        gmx = st.slider("X", 0.0, 1.0, 0.1, 0.05, key="g_mut_x")
+        gmy = st.slider("Y", 0.0, 1.0, 0.2, 0.05, key="g_mut_y")
 
     st.markdown("---")
 
@@ -162,14 +162,14 @@ with st.spinner("Simulating..."):
             plot_right=True
         )
 
-        with tab_report:
-            st.text_area("Output", text_result, height=400, disabled=True)
-
         with tab_viz:
             if fig:
                 st.pyplot(fig)
             else:
                 st.warning("No plot generated.")
+
+        with tab_report:
+            st.text_area("Output", text_result, height=400, disabled=True)
 
     except Exception as e:
         st.error(f"Simulation Error: {e}")

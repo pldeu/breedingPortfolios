@@ -1,4 +1,5 @@
 import gurobipy as gp
+import matplotlib.pyplot as plt
 import io
 from contextlib import redirect_stdout
 from matplotlib.figure import Figure 
@@ -8,6 +9,8 @@ import numpy as np
 from gurobipy import GRB
 from matplotlib.colors import TwoSlopeNorm, Normalize
 from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
+import pandas as pd
+
 
 class ExperimentRunner:
 
@@ -254,6 +257,51 @@ class ExperimentRunner:
         mean = self.beta @ x_sol
         return variance, mean
 
+    def _compute_grid(self):
+        for scen in self.scenario_pairs:
+            g_fixed = scen["g_fixed"]
+            g_mutable = scen["g_mutable"]
+
+            # --- A. Baseline (Before Breeding) ---
+            U_fix = self.get_mean_yield(g_fixed)
+            Var_fix = self.get_variance(g_fixed)
+
+            # Value of original portfolio
+
+            # --- B. Grid Calculations (Candidates for new Mutable) ---
+            U_grid = self.beta[0] * self.X + self.beta[1] * self.Y
+            Var_grid = self.var_y_grid()
+
+            Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed)
+
+            Delta_mu = U_fix - U_grid
+            Var_diff = Var_fix + Var_grid - 2 * Cov_grid_fix
+            denom_safe = np.where(Var_diff < 1e-9, 1e-9, Var_diff)
+
+            # Weight of FIXED asset
+            w_fix_grid = (Delta_mu / self.gamma + (Var_grid - Cov_grid_fix)) / denom_safe
+            w_fix_grid = np.clip(w_fix_grid, 0.0, 1.0)
+            w_new_grid = 1.0 - w_fix_grid
+
+            # --- C. Mahalanobis Feasibility ---
+            u1 = self.X - g_mutable[0]
+            u2 = self.Y - g_mutable[1]
+            d2 = self.Ginv[0, 0] * u1 ** 2 + 2 * self.Ginv[0, 1] * u1 * u2 + self.Ginv[1, 1] * u2 ** 2
+            feasible_mask = (d2 <= self.R ** 2)
+
+
+            # Prepare a grid_dict passed to each strategy
+            grid_dict = {'X': self.X, 'Y': self.Y, 'U_grid': U_grid, 'Var_grid': Var_grid,
+                            'feasible_mask': feasible_mask, 'g_fixed': g_fixed, 'g_mutable': g_mutable, 'U_fix': U_fix,
+                            'Cov_grid_fix': Cov_grid_fix, 'w_fix_grid': w_fix_grid,
+                            'w_new_grid': w_new_grid,
+                            'p': self.p, 'beta': self.beta, 'r_g': self.r_g, 'gamma': self.gamma, 'c': self.c,
+                            'Ginv': self.Ginv, 'R': self.R, 'replace': self.replace }
+            grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
+            grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
+
+            return grid_dict
+        
     def find_optimal_action_constrained(self, grid, gamma_val):
         """
         Finds the candidate genotype from the grid that maximizes the portfolio
@@ -303,91 +351,10 @@ class ExperimentRunner:
 
         return x_candidate
 
-    def get_metrics_for_genotype(self, grid, g_cand):
+
+    def solve_nise_frontier(self, grid=None, noBreed=False, tol=1e-4):
         """
-        Helper to get (Variance, Mean) of the OPTIMAL portfolio 
-        constructed using the given candidate genotype g_cand.
-        """
-        # We need to run the portfolio weight optimization (inner loop)
-        # for this specific candidate to get the Portfolio Variance/Mean.
-        # We can reuse _get_standard_output or similar.
-
-        if self.replace:
-            # 2-Asset Mode
-            res = self._get_standard_output([grid['g_fixed'], g_cand])
-        else:
-            # 3-Asset Mode
-            res = self._get_standard_output([grid['g_fixed'], grid['g_mutable'], g_cand])
-
-        # Extract Portfolio Mean and Variance
-        # Your dict keys are: 'mean_yield', 'var_portfolio'
-        # Note: 'stats_portfolio' might be nested depending on which helper you used.
-        # Based on your file, _get_standard_output returns nested stats, 
-        # but _get_standard_output_3_assets might not?
-        # Let's handle the specific dict structure from your file:
-
-        if 'stats_portfolio' in res:
-            return res['stats_portfolio']['var_portfolio'], res['stats_portfolio']['mean_yield']
-        else:
-            # Fallback for 3-asset result structure if it differs
-            # You might need to adjust this key access based on your exact return dict
-            # Assuming you might have added keys to _get_standard_output_3_assets
-            # If not, you might have to calculate them manually here.
-
-            # Quick calculation if keys missing:
-            w = res['weights']['env_1']  # Assuming constant weights
-            # ... (Manual calculation if needed, but standard dicts usually have it)
-            # For now, let's assume you ensure the dict has 'mean_yield' and 'var_portfolio'
-            return 0.0, 0.0  # Replace with actual key access
-        
-
-    def _compute_grid(self):
-        for scen in self.scenario_pairs:
-            g_fixed = scen["g_fixed"]
-            g_mutable = scen["g_mutable"]
-
-            # --- A. Baseline (Before Breeding) ---
-            U_fix = self.get_mean_yield(g_fixed)
-            Var_fix = self.get_variance(g_fixed)
-
-            # Value of original portfolio
-
-            # --- B. Grid Calculations (Candidates for new Mutable) ---
-            U_grid = self.beta[0] * self.X + self.beta[1] * self.Y
-            Var_grid = self.var_y_grid()
-
-            Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed)
-
-            Delta_mu = U_fix - U_grid
-            Var_diff = Var_fix + Var_grid - 2 * Cov_grid_fix
-            denom_safe = np.where(Var_diff < 1e-9, 1e-9, Var_diff)
-
-            # Weight of FIXED asset
-            w_fix_grid = (Delta_mu / self.gamma + (Var_grid - Cov_grid_fix)) / denom_safe
-            w_fix_grid = np.clip(w_fix_grid, 0.0, 1.0)
-            w_new_grid = 1.0 - w_fix_grid
-
-            # --- C. Mahalanobis Feasibility ---
-            u1 = self.X - g_mutable[0]
-            u2 = self.Y - g_mutable[1]
-            d2 = self.Ginv[0, 0] * u1 ** 2 + 2 * self.Ginv[0, 1] * u1 * u2 + self.Ginv[1, 1] * u2 ** 2
-            feasible_mask = (d2 <= self.R ** 2)
-
-
-            # Prepare a grid_dict passed to each strategy
-            grid_dict = {'X': self.X, 'Y': self.Y, 'U_grid': U_grid, 'Var_grid': Var_grid,
-                            'feasible_mask': feasible_mask, 'g_fixed': g_fixed, 'g_mutable': g_mutable, 'U_fix': U_fix,
-                            'Cov_grid_fix': Cov_grid_fix, 'w_fix_grid': w_fix_grid,
-                            'w_new_grid': w_new_grid,
-                            'p': self.p, 'beta': self.beta, 'r_g': self.r_g, 'gamma': self.gamma, 'c': self.c,
-                            'Ginv': self.Ginv, 'R': self.R, 'replace': self.replace}
-            grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
-
-            return grid_dict
-
-    def solve_nise_frontier(self, grid=None, tol=1e-4):
-        """
-        NISE Algorithm to find vertices of the efficient frontier.
+        NISE Algorithm to find vertices of the efficient frontier using Gurobi.
         """
         frontier = []
         if grid == None:
@@ -395,45 +362,55 @@ class ExperimentRunner:
             if grid == None:
                 grid = self._compute_grid()
 
-        # 1. Helper to solve for a specific Gamma and return (Var, Mean, Gamma, x_cand)
+        # 1. Helper to solve for a specific Gamma using Gurobi
         def solve_point(gamma_v):
-            x_cand = self.find_optimal_action_constrained(grid, gamma_v)
-
-            # Now calculate the specific Portfolio Variance/Mean for this candidate
-            # We MUST use the same gamma to find the optimal weights
+            # Backup original gamma and set the new one for Gurobi
             orig_g = self.gamma
             self.gamma = gamma_v
-
-            # Use the single-point calculator
-            if self.replace:
-                details = self._get_standard_output([grid['g_fixed'], x_cand])
-                res = self.calculate_stats_from_dict(details)
-                var_p, mean_p = res['variance'], res['mean']
+            if noBreed:
+                g_fixed = grid["g_fixed"]
+                g_mutable = grid["g_mutable"]
+                opt_result = self._get_standard_output([g_fixed, g_mutable])
             else:
-                details = self._get_standard_output([grid['g_fixed'], grid['g_mutable'], x_cand])
-                # Note: You need to ensure _get_standard_output_3_assets returns these stats!
-                # If it currently only returns weights, you must update it to return mean/var.
-                # Assuming it returns a 'hindsight_score' or similar, we might need to recalc:
-                # (You can just call calculate_stats_from_dict(details) if compatible)
-                res = self.calculate_stats_from_dict(details)
-                var_p, mean_p = res['variance'], res['mean']
+                opt_result = grid['optimizer'].change_gamma_B4P(gamma_v)
+            
+            if opt_result is None:
+                # Handle cases where Gurobi fails or times out
+                self.gamma = orig_g
+                return None
 
+            # Extract the optimal genotype (assuming _build_result returns it under 'g_opt' or similar)
+            # You might need to adjust 'g_opt' based on your exact _build_result keys
+            x_cand = opt_result["genotypes"][-1]
+            mean_p = opt_result["mean"]
+            var_p = opt_result["variance"]
+
+            # Restore original gamma
             self.gamma = orig_g
+            grid['optimizer'].gamma = orig_g
             return (var_p, mean_p, gamma_v, x_cand)
 
         # 2. Anchors
-        p_min_var = solve_point(1e6)  # Large Gamma
-        p_max_ret = solve_point(0.0)  # Zero Gamma
+        # CAUTION: Gurobi might face numerical instability with an extreme gamma like 1e8. 
+        # If the solver struggles or returns infeasible, lower this to 1e5 or 1e6.
+        p_min_var = solve_point(1e5)  # High Gamma (Risk-Averse)
+        p_max_ret = solve_point(0.0)  # Zero Gamma (Risk-Neutral)
+
+        if p_min_var is None or p_max_ret is None:
+            print("Failed to find anchor points for the Pareto frontier.")
+            return frontier
 
         frontier.append(p_min_var)
         frontier.append(p_max_ret)
 
         # 3. Recursive NISE
         def refine(p1, p2):
+            if p1 is None or p2 is None: return
+            
             v1, m1, _, _ = p1
             v2, m2, _, _ = p2
 
-            # Slope
+            # Slope (Change in Mean / Change in Variance)
             if abs(v2 - v1) < 1e-9: return
             slope = (m2 - m1) / (v2 - v1)
             gamma_new = 2 * slope
@@ -441,14 +418,14 @@ class ExperimentRunner:
             if gamma_new < 0: return  # Concavity error or numerical noise
 
             p_new = solve_point(gamma_new)
+            if p_new is None: return
+            
             v_new, m_new = p_new[0], p_new[1]
 
             # Check improvement (Vertical distance to segment)
             expected_mean = m1 + slope * (v_new - v1)
             if (m_new - expected_mean) > tol:
                 frontier.append(p_new)
-                # Sort by variance to ensure correct left/right recursion
-                # (Optional, but helps logical flow if implementing iteratively)
                 refine(p1, p_new)
                 refine(p_new, p2)
 
@@ -641,8 +618,10 @@ class ExperimentRunner:
         var_p = gp.quicksum(w[i] * Sigma[i, j] * w[j] for i in range(n) for j in range(n))
         m.setObjective(mu_p - 0.5 * self.gamma * var_p, GRB.MAXIMIZE)
         m.optimize()
-        weights = [w[i].X for i in range(n)] if m.Status == GRB.OPTIMAL else [1.0] + [0.0] * (n - 1)
+        weights = [w[i].X for i in range(n)] #if m.Status == GRB.OPTIMAL else [1.0] + [0.0] * (n - 1)
 
+        if m.Status != GRB.OPTIMAL:
+            print('ERROR')
 
         # 4. Format output
         return {
@@ -656,7 +635,59 @@ class ExperimentRunner:
             "variance":sum(w[i].X * Sigma[i, j] * w[j].X for i in range(n) for j in range(n))
         }
 
-    def run(self, strategies=None, plot_extensive=False, easy_base=False, no_plot=False, replace=False, pareto=False, plot_right=False):
+    def _get_hindsight_output_2_assets(self, g_fixed, g_cand):
+        """Calculates switching utility and weights for Fixed + Candidate."""
+        yf = np.array([g_fixed[0] + self.c * g_fixed[1], self.c * g_fixed[0] + g_fixed[1]])
+        yc = np.array([g_cand[0] + self.c * g_cand[1], self.c * g_cand[0] + g_cand[1]])
+
+        # Best yield in each environment
+        y_opt = np.maximum(yf, yc)
+        mu = self.p * y_opt[0] + (1 - self.p) * y_opt[1]
+        var = (self.p * (y_opt[0] ** 2) + (1 - self.p) * (y_opt[1] ** 2)) - mu ** 2
+
+        # Weights: 1.0 for the winner in each environment
+        w_env1 = [1.0, 0.0] if yf[0] >= yc[0] else [0.0, 1.0]
+        w_env2 = [1.0, 0.0] if yf[1] >= yc[1] else [0.0, 1.0]
+
+        return {
+            "genotypes": [g_fixed.tolist(), g_cand.tolist()],
+            "weights": {"env_1": w_env1, "env_2": w_env2},
+            "hindsight_score": mu - 0.5 * self.gamma * var
+        }
+
+    def _get_hindsight_output_3_assets(self, g_fixed, g_mut, g_cand):
+        """Calculates switching utility and weights for Fixed + Mutable + Candidate."""
+        yf = np.array([g_fixed[0] + self.c * g_fixed[1], self.c * g_fixed[0] + g_fixed[1]])
+        ym = np.array([g_mut[0] + self.c * g_mut[1], self.c * g_mut[0] + g_mut[1]])
+        yc = np.array([g_cand[0] + self.c * g_cand[1], self.c * g_cand[0] + g_cand[1]])
+
+        y_opt = np.maximum.reduce([yf, ym, yc])
+        mu = self.p * y_opt[0] + (1 - self.p) * y_opt[1]
+        var = (self.p * (y_opt[0] ** 2) + (1 - self.p) * (y_opt[1] ** 2)) - mu ** 2
+
+        # Determine weights for Env 1
+        if yf[0] >= ym[0] and yf[0] >= yc[0]:
+            w_env1 = [1.0, 0.0, 0.0]
+        elif ym[0] >= yc[0]:
+            w_env1 = [0.0, 1.0, 0.0]
+        else:
+            w_env1 = [0.0, 0.0, 1.0]
+
+        # Determine weights for Env 2
+        if yf[1] >= ym[1] and yf[1] >= yc[1]:
+            w_env2 = [1.0, 0.0, 0.0]
+        elif ym[1] >= yc[1]:
+            w_env2 = [0.0, 1.0, 0.0]
+        else:
+            w_env2 = [0.0, 0.0, 1.0]
+
+        return {
+            "genotypes": [g_fixed.tolist(), g_mut.tolist(), g_cand.tolist()],
+            "weights": {"env_1": w_env1, "env_2": w_env2},
+            "hindsight_score": mu - 0.5 * self.gamma * var
+        }
+    
+    def run(self, strategies=None, plot_extensive=False, easy_base=False, no_plot=False, replace=False, pareto=False, plot_right=False, dpi=100):
         """
         Run scenarios and evaluate a set of strategies.
 
@@ -667,8 +698,7 @@ class ExperimentRunner:
         """
         self.replace = replace
         full_results = []
-
-        # --- CHANGE 1: Setup Buffer to capture text ---
+         # --- CHANGE 1: Setup Buffer to capture text ---
         output_buffer = io.StringIO()
         fig = None  # Placeholder for the figure
 
@@ -698,13 +728,339 @@ class ExperimentRunner:
                 """Maximize Portfolio Mean Yield."""
                 return None, grid['optimizer'].strat_B4M()
 
+            def strat_max_share(grid):
+                """Maximize Candidate Share (Adaptation)."""
+                return None, grid['optimizer'].strat_max_share()
+
             def strat_max_investability(grid):
                 """Maximize Candidate Share (Adaptation)."""
                 return None, grid['optimizer'].strat_max_investability(min_improvement=1e-4)
 
+            def strat_max_investability3(grid):
+                """Maximize Candidate Share (Adaptation)."""
+                return None, grid['optimizer'].strat_max_investability(min_improvement=1e-3)
+
             def strat_BB(grid):
                 """BeatBest: Standalone Max."""
                 return None, grid['optimizer'].strat_BB()
+
+            def get_pareto_frontier(grid):
+                """
+                Computes the Pareto Frontier and returns a list of dictionaries 
+                containing all metrics needed for CSV storage.
+                """
+                stats = grid['stats']
+
+                W = stats['w_c']  # Adoption Share
+                U = stats['v_port']  # Portfolio Utility (MV)
+                M = stats['mean_port']  # Portfolio Mean
+                mask = grid['feasible_mask']
+
+                rows, cols = np.where(mask)
+                valid_W = W[mask]
+                valid_U = U[mask]
+                valid_M = M[mask]
+
+                # 1. Zip data for sorting
+                # (Share, Utility, Mean, Row, Col)
+                data = []
+                for r, c, w, u, m in zip(rows, cols, valid_W, valid_U, valid_M):
+                    data.append((w, u, m, r, c))
+
+                # 2. Sort by Share Descending
+                data.sort(key=lambda x: x[0], reverse=True)
+
+                pareto_list = []
+                current_max_u = -np.inf
+
+                for w, u, m, r, c in data:
+                    if u > current_max_u:
+                        # 3. Build the dictionary exactly as your CSV logic expects
+                        res = {
+                            'mv_val': u,
+                            'mean_val': m,
+                            # Variance = (Mean - Utility) * 2 / Gamma
+                            'var_val': (m - u) * 2 / self.gamma,
+                            'w_cand': w,
+                            'g1': grid['X'][r, c],
+                            'g2': grid['Y'][r, c]
+                        }
+
+                        # Handle weights for the other assets
+                        # We can approximate or just store the candidate weight for the Pareto
+                        res['w_fixed'] = 1.0 - w  # Simplified for the CSV
+
+                        pareto_list.append(res)
+                        current_max_u = u
+
+                return pareto_list
+
+            def strat_opposite_direction(self, grid):
+                """
+                Selects the variety that is most 'opposite' to the current portfolio 
+                to maximize directional diversification.
+                Metric: Maximize projection onto the negative centroid vector.
+                """
+                X, Y = grid['X'], grid['Y']
+
+                # 1. Determine the 'Center of Mass' of the existing portfolio
+                if self.replace:
+                    # 2-Assets: Center is just the Fixed asset
+                    center_x = grid['g_fixed'][0]
+                    center_y = grid['g_fixed'][1]
+                else:
+                    # 3-Assets: Center is the average of Fixed and Mutable
+                    center_x = 0.5 * (grid['g_fixed'][0] + grid['g_mutable'][0])
+                    center_y = 0.5 * (grid['g_fixed'][1] + grid['g_mutable'][1])
+
+                # 2. Calculate Projection: Dot Product with the Negative Vector
+                # We want to maximize: (g_cand) dot (-center)
+                # This is equivalent to minimizing: (g_cand) dot (center)
+                metric = -(X * center_x + Y * center_y)
+
+                # 3. Apply Mask and Select
+                metric = np.where(grid['feasible_mask'], metric, -np.inf)
+                idx = np.unravel_index(np.nanargmax(metric), grid['X'].shape)
+
+                # 4. Return Output
+                g_cand = np.array([grid['X'][idx], grid['Y'][idx]])
+                return idx, self._get_final_output(grid, g_cand)
+
+            def strat_max_distance(self, grid):
+                """
+                Selects the variety that is geometrically furthest from the existing assets.
+                Logic: Maximize the Minimum Euclidean Distance (Maximin) to ensuring distinctness.
+                """
+                X, Y = grid['X'], grid['Y']
+
+                # 1. Calculate squared distance to Fixed Asset
+                d2_fixed = (X - grid['g_fixed'][0]) ** 2 + (Y - grid['g_fixed'][1]) ** 2
+
+                if self.replace:
+                    # 2-Asset: Just maximize distance to Fixed
+                    metric = d2_fixed
+                else:
+                    # 3-Asset: Maximize the distance to the *closest* existing neighbor
+                    d2_mutable = (X - grid['g_mutable'][0]) ** 2 + (Y - grid['g_mutable'][1]) ** 2
+                    metric = np.minimum(d2_fixed, d2_mutable)
+
+                # 2. Apply Mask and Select
+                metric = np.where(grid['feasible_mask'], metric, -np.inf)
+                idx = np.unravel_index(np.nanargmax(metric), grid['X'].shape)
+
+                # 3. Return Output
+                g_cand = np.array([grid['X'][idx], grid['Y'][idx]])
+                return idx, self._get_final_output(grid, g_cand)
+
+            def strat_hindsight_base(grid):
+                """
+                Benchmark: Perfect information performance of the EXISTING portfolio.
+                No grid search required. Returns switching utility of {Fixed, Mutable}.
+                """
+                g_f = grid["g_fixed"]
+                g_m = grid["g_mutable"]
+
+                # Evaluate hindsight switching between Fixed and Mutable
+                details = self._get_hindsight_output_2_assets(g_f, g_m)
+
+                # Return None as index because no new genotype was selected from the grid
+                return None, details
+
+            def strat_hindsight(grid):
+                """
+                True Hindsight: Scans the grid for the candidate that maximizes 
+                switching utility when paired with existing assets.
+                """
+                # Precompute yields for fixed/mutable for speed
+                yf1 = grid['g_fixed'][0] + self.c * grid['g_fixed'][1]
+                yf2 = self.c * grid['g_fixed'][0] + grid['g_fixed'][1]
+
+                if self.replace:
+                    # Maximize switching between {Fixed, Candidate}
+                    yc1 = grid['X'] + self.c * grid['Y']
+                    yc2 = self.c * grid['X'] + grid['Y']
+                    y_opt1, y_opt2 = np.maximum(yf1, yc1), np.maximum(yf2, yc2)
+                else:
+                    # Maximize switching between {Fixed, Mutable, Candidate}
+                    ym1 = grid['g_mutable'][0] + self.c * grid['g_mutable'][1]
+                    ym2 = self.c * grid['g_mutable'][0] + grid['g_mutable'][1]
+                    yc1 = grid['X'] + self.c * grid['Y']
+                    yc2 = self.c * grid['X'] + grid['Y']
+                    y_opt1 = np.maximum.reduce([yf1, ym1, yc1])
+                    y_opt2 = np.maximum.reduce([yf2, ym2, yc2])
+
+                # Calculate Hindsight Score (MV of the switched yields)
+                Mu = self.p * y_opt1 + (1 - self.p) * y_opt2
+                Var = (self.p * y_opt1 ** 2 + (1 - self.p) * y_opt2 ** 2) - Mu ** 2
+                Score = Mu - 0.5 * self.gamma * Var
+
+                Score[~grid['feasible_mask']] = -np.inf
+                idx = np.unravel_index(np.nanargmax(Score), Score.shape)
+                g_cand = np.array([grid['X'][idx], grid['Y'][idx]])
+
+                if self.replace:
+                    details = self._get_hindsight_output_2_assets(grid["g_fixed"], g_cand)
+                else:
+                    details = self._get_hindsight_output_3_assets(grid["g_fixed"], grid["g_mutable"], g_cand)
+                return idx, details
+
+            def get_hindsight_portfolio_output_2_assets(g_fixed, g_cand):
+                """
+                Optimizes TWO separate portfolios (w1 for Env1, w2 for Env2) 
+                using only Fixed and Candidate assets (Replace Mode).
+                """
+                import gurobipy as gp
+                from gurobipy import GRB
+
+                # 1. Setup Yield Vectors for 2 Assets
+                # y_vec_1 = [Yield_Fixed_E1, Yield_Cand_E1]
+                y_vec_1 = np.array([
+                    g_fixed[0] + self.c * g_fixed[1],
+                    g_cand[0] + self.c * g_cand[1]
+                ])
+
+                # y_vec_2 = [Yield_Fixed_E2, Yield_Cand_E2]
+                y_vec_2 = np.array([
+                    self.c * g_fixed[0] + g_fixed[1],
+                    self.c * g_cand[0] + g_cand[1]
+                ])
+
+                try:
+                    m = gp.Model()
+                    m.setParam('OutputFlag', 0)
+                    m.setParam("TimeLimit", 60)
+
+                    # 2. Decision Variables: Two sets of weights (size 2)
+                    w1 = m.addVars(2, lb=0.0, ub=1.0, name="w1")  # Weights for Env 1
+                    w2 = m.addVars(2, lb=0.0, ub=1.0, name="w2")  # Weights for Env 2
+
+                    # 3. Constraints: Budget constraint for each environment
+                    m.addConstr(gp.quicksum(w1) == 1, "Budget_Env1")
+                    m.addConstr(gp.quicksum(w2) == 1, "Budget_Env2")
+
+                    # 4. Define Objective Components
+                    # Mean Yield in Env 1 and Env 2
+                    mu_1 = gp.quicksum(w1[i] * y_vec_1[i] for i in range(2))
+                    mu_2 = gp.quicksum(w2[i] * y_vec_2[i] for i in range(2))
+
+                    # Overall Hindsight Mean and Variance
+                    # Mean = p * mu_1 + (1-p) * mu_2
+                    h_mean = self.p * mu_1 + (1 - self.p) * mu_2
+
+                    # Variance = p * (1-p) * (mu_1 - mu_2)^2
+                    diff = m.addVar(lb=-GRB.INFINITY, name="diff")
+                    m.addConstr(diff == mu_1 - mu_2)
+                    h_var = self.p * (1 - self.p) * (diff * diff)
+
+                    # Objective Function
+                    obj = h_mean - 0.5 * self.gamma * h_var
+                    m.setObjective(obj, GRB.MAXIMIZE)
+
+                    # 5. Optimize
+                    m.optimize()
+
+                    if m.Status == GRB.OPTIMAL:
+                        weights_1 = [w1[i].X for i in range(2)]
+                        weights_2 = [w2[i].X for i in range(2)]
+                    else:
+                        # Fallback to greedy (pure fixed)
+                        weights_1 = [1, 0]
+                        weights_2 = [1, 0]
+
+                except Exception as e:
+                    print(f"Optimization failed: {e}")
+                    weights_1 = [1, 0]
+                    weights_2 = [1, 0]
+
+                # 6. Format Output
+                return {
+                    "genotypes": [g_fixed.tolist(), g_cand.tolist()],
+                    "weights": {
+                        "env_1": weights_1,
+                        "env_2": weights_2
+                    }
+                }
+
+            def get_hindsight_portfolio_output_3_assets(g_fixed, g_mut, g_cand):
+                """
+                Optimizes TWO separate portfolios (w1 for Env1, w2 for Env2) 
+                to maximize the joint Hindsight Utility.
+                """
+                import gurobipy as gp
+                from gurobipy import GRB
+
+                # 1. Setup Yield Vectors
+                # y_vec_1 = [Yield_Fixed_E1, Yield_Mut_E1, Yield_Cand_E1]
+                y_vec_1 = np.array([
+                    g_fixed[0] + self.c * g_fixed[1],
+                    g_mut[0] + self.c * g_mut[1],
+                    g_cand[0] + self.c * g_cand[1]
+                ])
+
+                # y_vec_2 = [Yield_Fixed_E2, Yield_Mut_E2, Yield_Cand_E2]
+                y_vec_2 = np.array([
+                    self.c * g_fixed[0] + g_fixed[1],
+                    self.c * g_mut[0] + g_mut[1],
+                    self.c * g_cand[0] + g_cand[1]
+                ])
+
+                try:
+                    m = gp.Model()
+                    m.setParam('OutputFlag', 0)
+                    m.setParam("NonConvex", 2)
+                    m.setParam("TimeLimit", 60)
+
+                    # 2. Decision Variables: Two sets of weights
+                    w1 = m.addVars(3, lb=0.0, ub=1.0, name="w1")  # Weights for Env 1
+                    w2 = m.addVars(3, lb=0.0, ub=1.0, name="w2")  # Weights for Env 2
+
+                    # 3. Constraints: Budget constraint for each environment
+                    m.addConstr(gp.quicksum(w1) == 1, "Budget_Env1")
+                    m.addConstr(gp.quicksum(w2) == 1, "Budget_Env2")
+
+                    # 4. Define Objective Components
+                    # Mean Yield in Env 1 and Env 2
+                    mu_1 = gp.quicksum(w1[i] * y_vec_1[i] for i in range(3))
+                    mu_2 = gp.quicksum(w2[i] * y_vec_2[i] for i in range(3))
+
+                    # Overall Hindsight Mean and Variance
+                    # Mean = p * mu_1 + (1-p) * mu_2
+                    h_mean = self.p * mu_1 + (1 - self.p) * mu_2
+
+                    # Variance = p * (1-p) * (mu_1 - mu_2)^2
+                    # Note: We create a helper variable for the difference to keep it clean
+                    diff = m.addVar(lb=-GRB.INFINITY, name="diff")
+                    m.addConstr(diff == mu_1 - mu_2)
+                    h_var = self.p * (1 - self.p) * (diff * diff)
+
+                    # Objective Function
+                    obj = h_mean - 0.5 * self.gamma * h_var
+                    m.setObjective(obj, GRB.MAXIMIZE)
+
+                    # 5. Optimize
+                    m.optimize()
+
+                    if m.Status == GRB.OPTIMAL:
+                        weights_1 = [w1[i].X for i in range(3)]
+                        weights_2 = [w2[i].X for i in range(3)]
+                    else:
+                        # Fallback to greedy (pure fixed)
+                        weights_1 = [1, 0, 0]
+                        weights_2 = [1, 0, 0]
+
+                except Exception as e:
+                    print(f"Optimization failed: {e}")
+                    weights_1 = [1, 0, 0]
+                    weights_2 = [1, 0, 0]
+
+                # 6. Format Output
+                return {
+                    "genotypes": [g_fixed.tolist(), g_mut.tolist(), g_cand.tolist()],
+                    "weights": {
+                        "env_1": weights_1,
+                        "env_2": weights_2
+                    }
+                }
 
             def strat_hindsight_optimized(grid):
                 """
@@ -801,8 +1157,365 @@ class ExperimentRunner:
                 return idx, details
                 '''
 
-            
-             # Build strategy dict
+            def calculate_split_mv(y1, y2):
+                """Helper to compute global Mean-Variance from environment-specific yields."""
+                mu = self.p * y1 + (1 - self.p) * y2
+                exp_sq = self.p * (y1 ** 2) + (1 - self.p) * (y2 ** 2)
+                var = exp_sq - mu ** 2
+                return mu - 0.5 * self.gamma * var
+
+            def get_split_strategies(grid):
+                """
+                Internal logic to find the best of 4 split-environment cases:
+                1. Env1: Asset A, Env2: Asset B
+                2. Env1: Asset B, Env2: Asset A
+                3. Both: Asset A
+                4. Both: Asset B
+                """
+                p, c = self.p, self.c
+                g_f = np.asarray(grid["g_fixed"])
+                X, Y = np.asarray(grid["X"]), np.asarray(grid["Y"])
+                mask = np.asarray(grid["feasible_mask"])
+
+                # Fixed Yields
+                y1_f = g_f[0] + c * g_f[1]
+                y2_f = c * g_f[0] + g_f[1]
+
+                # Grid/Candidate Yields
+                y1_c = X + c * Y
+                y2_c = c * X + Y
+
+                # Evaluate the 4 Cases across the whole grid
+                scores = {
+                    "f_c": calculate_split_mv(y1_f, y2_c),  # Case 1: Fixed/Cand
+                    "c_f": calculate_split_mv(y1_c, y2_f),  # Case 2: Cand/Fixed
+                    "f_f": calculate_split_mv(y1_f, y2_f),  # Case 3: Fixed/Fixed
+                    "c_c": calculate_split_mv(y1_c, y2_c)  # Case 4: Cand/Cand
+                }
+
+                # Find the best case and best genotype
+                best_val = -np.inf
+                best_case = None
+                best_idx = (0, 0)
+
+                for case, score_grid in scores.items():
+                    masked = np.where(mask, score_grid, -np.inf)
+                    idx_flat = np.nanargmax(masked)
+                    if masked[np.unravel_index(idx_flat, X.shape)] > best_val:
+                        best_val = masked[np.unravel_index(idx_flat, X.shape)]
+                        best_idx = np.unravel_index(idx_flat, X.shape)
+                        best_case = case
+
+                # Map case to standard weights [w_fixed, w_cand]
+                weight_map = {
+                    "f_c": {"env_1": [1.0, 0.0], "env_2": [0.0, 1.0]},
+                    "c_f": {"env_1": [0.0, 1.0], "env_2": [1.0, 0.0]},
+                    "f_f": {"env_1": [1.0, 0.0], "env_2": [1.0, 0.0]},
+                    "c_c": {"env_1": [0.0, 1.0], "env_2": [0.0, 1.0]}
+                }
+
+                g_cand = np.array([X[best_idx], Y[best_idx]])
+                return best_idx, {
+                    "genotypes": [g_f.tolist(), g_cand.tolist()],
+                    "weights": weight_map[best_case]
+                }
+
+            def strat_splitEnv_0B(grid):
+                """Zero Breeding Split: Uses original Fixed and Mutable assets."""
+                # Temporarily swap grid X/Y with a single-point 'grid' containing only g_mutable
+                g_m = grid["g_mutable"]
+                mock_grid = grid.copy()
+                mock_grid.update(
+                    {'X': np.array([[g_m[0]]]), 'Y': np.array([[g_m[1]]]), 'feasible_mask': np.array([[True]])})
+                _, details = get_split_strategies(mock_grid)
+                # Find index of g_mutable in actual grid for consistent return
+                dist = (grid['X'] - g_m[0]) ** 2 + (grid['Y'] - g_m[1]) ** 2
+                return np.unravel_index(np.argmin(dist), grid['X'].shape), details
+
+            def strat_splitEnv_fixed(grid):
+                """Breeding Split: Finds best g_cand to pair with g_fixed in a split env."""
+                return get_split_strategies(grid)
+
+
+
+            def strat_splitEnv_freeWeight(grid):
+                """
+                Optimized Free Weight Split using analytical boundary search.
+                Replaces 10,000 weight combinations with 4 edge evaluations.
+                """
+                p, c, gamma = self.p, self.c, self.gamma
+                g_f = grid["g_fixed"]
+                X, Y, mask = grid["X"], grid["Y"], grid["feasible_mask"]
+
+                # Yields
+                y1_f, y2_f = g_f[0] + c * g_f[1], c * g_f[0] + g_f[1]
+                y1_c, y2_c = X + c * Y, c * X + Y
+
+                # Precompute constants for the MV score: p(1-p)*gamma/2
+                K = 0.5 * gamma * p * (1 - p)
+
+                def solve_edge(fixed_w1=None, fixed_w2=None):
+                    """Solves for the optimal weight on a specific edge of the [0,1]^2 box."""
+                    # Yields in Env 1 and 2 as functions of the free weight 'w'
+                    if fixed_w1 is not None:  # Edge where w1 is constant, w2 is free
+                        # Y1 is constant: y1_c + fixed_w1 * (y1_f - y1_c)
+                        Y1 = y1_c + fixed_w1 * (y1_f - y1_c)
+                        # Y2 = y2_c + w2 * (y2_f - y2_c)
+                        d2 = y2_f - y2_c
+                        # U(w2) = (1-p)*d2*w2 - K*(Y1 - (y2_c + w2*d2))^2 + const
+                        # Quadratic: a*w2^2 + b*w2 + c
+                        a = -K * (d2 ** 2)
+                        b = (1 - p) * d2 + 2 * K * d2 * (Y1 - y2_c)
+                    else:  # Edge where w2 is constant, w1 is free
+                        Y2 = y2_c + fixed_w2 * (y2_f - y2_c)
+                        d1 = y1_f - y1_c
+                        a = -K * (d1 ** 2)
+                        b = p * d1 - 2 * K * d1 * (y1_c - Y2)
+
+                    # Optimal w = -b / (2a), handle a=0 (linear case)
+                    w_opt = np.zeros_like(X)
+                    safe = np.abs(a) > 1e-12
+                    w_opt[safe] = -b[safe] / (2 * a[safe])
+                    # If linear (a=0), pick 0 or 1 based on slope b
+                    w_opt[~safe] = np.where(b[~safe] > 0, 1.0, 0.0)
+
+                    w_opt = np.clip(w_opt, 0.0, 1.0)
+
+                    # Calculate scores for this optimal w on this edge
+                    if fixed_w1 is not None:
+                        res_w1, res_w2 = np.full_like(X, fixed_w1), w_opt
+                    else:
+                        res_w1, res_w2 = w_opt, np.full_like(X, fixed_w2)
+
+                    yp1 = y1_c + res_w1 * (y1_f - y1_c)
+                    yp2 = y2_c + res_w2 * (y2_f - y2_c)
+                    scores = calculate_split_mv(yp1, yp2)
+                    return scores, res_w1, res_w2
+
+                # Check the 4 boundaries of the [0,1] x [0,1] weight box
+                edges = [
+                    solve_edge(fixed_w1=0.0),  # w1=0, w2 in [0,1]
+                    solve_edge(fixed_w1=1.0),  # w1=1, w2 in [0,1]
+                    solve_edge(fixed_w2=0.0),  # w2=0, w1 in [0,1]
+                    solve_edge(fixed_w2=1.0)  # w2=1, w1 in [0,1]
+                ]
+
+                # Find the best edge for every genotype
+                all_scores = np.stack([e[0] for e in edges])
+                best_edge_idx = np.argmax(all_scores, axis=0)
+
+                # Extract best scores and weights
+                best_scores = np.take_along_axis(all_scores, best_edge_idx[None, ...], axis=0)[0]
+
+                # Selection
+                masked_scores = np.where(mask, best_scores, -np.inf)
+                win_idx_flat = np.nanargmax(masked_scores)
+                idx = np.unravel_index(win_idx_flat, X.shape)
+
+                # Get the winning weights for that specific grid point
+                win_edge = best_edge_idx[idx]
+                w1_win = edges[win_edge][1][idx]
+                w2_win = edges[win_edge][2][idx]
+
+                return idx, {
+                    "genotypes": [g_f.tolist(), [float(X[idx]), float(Y[idx])]],
+                    "weights": {
+                        "env_1": [float(w1_win), 1.0 - float(w1_win)],
+                        "env_2": [float(w2_win), 1.0 - float(w2_win)]
+                    }
+                }
+
+            def get_split_effort_output(grid, g_c1, g_c2):
+                """
+                Constructs the portfolio output for two specialist candidates (Split Effort).
+                Portfolio uses: Max(Fixed, [Mutable], C1, C2) in each environment.
+                """
+                # 1. Existing Assets Yields
+                yf = np.array([grid['g_fixed'][0] + self.c * grid['g_fixed'][1],
+                            self.c * grid['g_fixed'][0] + grid['g_fixed'][1]])
+
+                assets_y = [yf]  # List of arrays [y_env1, y_env2]
+                genotypes = [grid['g_fixed'].tolist()]
+
+                if not self.replace:
+                    gm = grid['g_mutable']
+                    ym = np.array([gm[0] + self.c * gm[1], self.c * gm[0] + gm[1]])
+                    assets_y.append(ym)
+                    genotypes.append(gm.tolist())
+
+                # 2. Candidate Yields
+                yc1 = np.array([g_c1[0] + self.c * g_c1[1], self.c * g_c1[0] + g_c1[1]])
+                yc2 = np.array([g_c2[0] + self.c * g_c2[1], self.c * g_c2[0] + g_c2[1]])
+
+                assets_y.extend([yc1, yc2])
+                genotypes.extend([g_c1.tolist(), g_c2.tolist()])
+
+                # 3. Determine Winner in each Environment (Hindsight Logic)
+                # Stack yields: Shape (NumAssets, 2) -> (2, NumAssets) for easy max
+                all_yields = np.vstack(assets_y).T
+
+                # Best yield values
+                y_opt = np.max(all_yields, axis=1)  # [max_env1, max_env2]
+
+                # Best asset indices (for weights)
+                win_idx = np.argmax(all_yields, axis=1)  # [idx_env1, idx_env2]
+
+                # 4. Calculate Portfolio Stats
+                mu = self.p * y_opt[0] + (1 - self.p) * y_opt[1]
+                var = (self.p * (y_opt[0] ** 2) + (1 - self.p) * (y_opt[1] ** 2)) - mu ** 2
+                score = mu - 0.5 * self.gamma * var
+
+                # 5. Construct Weights Dictionary
+                # Create one-hot weight vectors
+                n_assets = len(assets_y)
+                w_env1 = [0.0] * n_assets
+                w_env2 = [0.0] * n_assets
+                w_env1[win_idx[0]] = 1.0
+                w_env2[win_idx[1]] = 1.0
+
+                return {
+                    "genotypes": genotypes,
+                    "weights": {"env_1": w_env1, "env_2": w_env2},
+                    "split_effort_score": score
+                }
+
+            def strat_SplitEffort(grid):
+                """
+                Independent Specialists: Finds the best genotype for Env 1 and 
+                the best for Env 2 separately, then combines them.
+                """
+                # Yield grids
+                Y1 = grid['X'] + self.c * grid['Y']
+                Y2 = self.c * grid['X'] + grid['Y']
+
+                # Apply mask
+                Y1[~grid['feasible_mask']] = -np.inf
+                Y2[~grid['feasible_mask']] = -np.inf
+
+                # Select best for E1
+                idx1 = np.unravel_index(np.nanargmax(Y1), Y1.shape)
+                g_c1 = np.array([grid['X'][idx1], grid['Y'][idx1]])
+
+                # Select best for E2
+                idx2 = np.unravel_index(np.nanargmax(Y2), Y2.shape)
+                g_c2 = np.array([grid['X'][idx2], grid['Y'][idx2]])
+
+                # Return details (using g_c1 index as the primary index for plotting)
+                details = get_split_effort_output(grid, g_c1, g_c2)
+                return idx1, details
+
+            def strat_SplitEffortOptimal(grid):
+                """
+                Theoretical Specialists: Finds grid points closest to the analytical 
+                Maximum Yield solution for each environment.
+                """
+                # Analytical solution for Max Yield subject to g^T G g <= R^2
+                # Maximize beta^T g -> g_opt = R * (G^-1 beta) / norm
+
+                # Beta vectors for Env 1 and Env 2
+                b1 = np.array([1.0, self.c])
+                b2 = np.array([self.c, 1.0])
+
+                # Unconstrained directions (G_inv @ beta)
+                dir1 = self.Ginv @ b1
+                dir2 = self.Ginv @ b2
+
+                # Scale to radius R (assuming elliptical constraint centered at 0)
+                # R is likely stored in self.R or implicit in grid mask. 
+                # Using the grid's max feasible norm as proxy if R not explicit, 
+                # but usually g_opt is just the direction vector for search.
+
+                # Search Grid for points maximizing the projection onto these optimal directions
+                # (This is more robust than scaling if R is complex)
+
+                proj1 = grid['X'] * dir1[0] + grid['Y'] * dir1[1]
+                proj2 = grid['X'] * dir2[0] + grid['Y'] * dir2[1]
+
+                proj1[~grid['feasible_mask']] = -np.inf
+                proj2[~grid['feasible_mask']] = -np.inf
+
+                idx1 = np.unravel_index(np.nanargmax(proj1), proj1.shape)
+                g_c1 = np.array([grid['X'][idx1], grid['Y'][idx1]])
+
+                idx2 = np.unravel_index(np.nanargmax(proj2), proj2.shape)
+                g_c2 = np.array([grid['X'][idx2], grid['Y'][idx2]])
+
+                details = get_split_effort_output(grid, g_c1, g_c2)
+                return idx1, details
+
+            def strat_SplitEffortGlobal(grid):
+                """
+                Joint Optimization: Finds the pair (g1, g2) that maximizes the 
+                Global Mean-Variance score using Coordinate Descent.
+                """
+                # 1. Initialize with Independent Specialists (Fast start)
+                idx1_curr, details_init = strat_SplitEffort(grid)
+                g_c1 = np.array(details_init['genotypes'][-2])  # 2nd to last is c1
+                g_c2 = np.array(details_init['genotypes'][-1])  # Last is c2
+
+                # Precompute yield grids
+                Y1_grid = grid['X'] + self.c * grid['Y']
+                Y2_grid = self.c * grid['X'] + grid['Y']
+                Y1_grid[~grid['feasible_mask']] = -np.inf
+                Y2_grid[~grid['feasible_mask']] = -np.inf
+
+                # Existing assets yield (Fixed / Mutable)
+                yf = np.array([grid['g_fixed'][0] + self.c * grid['g_fixed'][1],
+                            self.c * grid['g_fixed'][0] + grid['g_fixed'][1]])
+
+                if self.replace:
+                    base_y1 = yf[0]
+                    base_y2 = yf[1]
+                else:
+                    gm = grid['g_mutable']
+                    ym = np.array([gm[0] + self.c * gm[1], self.c * gm[0] + gm[1]])
+                    base_y1 = max(yf[0], ym[0])
+                    base_y2 = max(yf[1], ym[1])
+
+                # 2. Coordinate Descent (Alternating Optimization)
+                # Usually converges in 2-3 iterations
+                for _ in range(10):
+                    # Step A: Fix g_c2, Optimize g_c1
+                    # In Env 2, we stick with max(Base, g_c2)
+                    yc2_val = g_c2[0] + self.c * g_c2[1]  # Yield of c2 in Env 1 (irrelevant if c1 wins)
+                    yc2_val_e2 = self.c * g_c2[0] + g_c2[1]
+
+                    # The portfolio yield in Env 2 is fixed for this step:
+                    Y_p2 = max(base_y2, yc2_val_e2)
+
+                    # We need to maximize Score( Y_p1, Y_p2 )
+                    # Y_p1 = max(base_y1, Y1_grid, yc2_val) -> usually c2 is weak in E1, so max(base, Y1_grid)
+                    # But rigorously:
+                    Y_p1_grid = np.maximum(base_y1, np.maximum(yc2_val, Y1_grid))
+
+                    mu = self.p * Y_p1_grid + (1 - self.p) * Y_p2
+                    var = (self.p * Y_p1_grid ** 2 + (1 - self.p) * Y_p2 ** 2) - mu ** 2
+                    score_grid = mu - 0.5 * self.gamma * var
+
+                    # Update g_c1
+                    best_idx1 = np.unravel_index(np.nanargmax(score_grid), score_grid.shape)
+                    g_c1 = np.array([grid['X'][best_idx1], grid['Y'][best_idx1]])
+
+                    # Step B: Fix g_c1, Optimize g_c2
+                    yc1_val_e1 = g_c1[0] + self.c * g_c1[1]
+                    yc1_val_e2 = self.c * g_c1[0] + g_c1[1]
+
+                    Y_p1 = max(base_y1, yc1_val_e1)
+
+                    Y_p2_grid = np.maximum(base_y2, np.maximum(yc1_val_e2, Y2_grid))
+
+                    mu = self.p * Y_p1 + (1 - self.p) * Y_p2_grid
+                    var = (self.p * Y_p1 ** 2 + (1 - self.p) * Y_p2_grid ** 2) - mu ** 2
+                    score_grid = mu - 0.5 * self.gamma * var
+
+                    # Update g_c2
+                    best_idx2 = np.unravel_index(np.nanargmax(score_grid), score_grid.shape)
+                    g_c2 = np.array([grid['X'][best_idx2], grid['Y'][best_idx2]])
+
+                details = get_split_effort_output(grid, g_c1, g_c2)
+                return best_idx1, details
+
+            # Build strategy dict
             default_strategies = {
                 'Base': strat_base,
                 'Mean': strat_B4M,
@@ -1013,7 +1726,7 @@ class ExperimentRunner:
                 # --- NEW BLOCK: Single Genotype Metrics ---
                 print("-" * 115)
                 print(
-                    f"{'Single Component':<25} | {'MV':<8} | {'Gain':<8} |{'Mean':<8}  | {'Var':<8} | {'g1':<8} | {'g2':<8}  ")
+                    f"{'Single Component':<25} | {'MV':<8} | {'Gain':<8} |{'Mean':<8}  | {'Var':<8} | {'g1':<8} | {'g2':<8} | {'y1':<8} | {'y2':<8}  ")
 
                 def print_pure_row(row_name, g_vec, ref_mv):
                     g = np.array(g_vec)  # Ensure numpy array
@@ -1021,7 +1734,7 @@ class ExperimentRunner:
                     gain = mv - ref_mv
                     # Print row matching the table format
                     print(
-                        f"{row_name:<25} | {mv:<8.4f} | {gain:<8.4f} | {mu:<8.4f} | {var:<8.4f} | {g[0]:<8.4f} | {g[1]:<8.4f} ")
+                        f"{row_name:<25} | {mv:<8.4f} | {gain:<8.4f} | {mu:<8.4f} | {var:<8.4f} | {g[0]:<8.4f} | {g[1]:<8.4f}| {(self.p * (g[0] + self.c * g[1])):<8.4f} | {((1 - self.p) * (self.c * g[0] + g[1])):<8.4f} ")
 
                 # 2. Print Standard Components
                 print_pure_row("Fixed Asset (Base)", g_fixed, base_line['mean_variance'])
@@ -1058,7 +1771,6 @@ class ExperimentRunner:
 
                 fig = Figure(figsize=(15.55, 9.6), dpi=100) 
                 axs = fig.subplots(3, 4)
-                                
                 # Flatten axes list for unified 0-11 indexing regardless of grid shape
                 # Order matches reading direction (Left->Right, Top->Bottom)
                 ax_list = axs.flatten()
@@ -1103,6 +1815,7 @@ class ExperimentRunner:
                 cb = fig.colorbar(cf, ax=ax)
                 cb.set_label('ΔV (Gain over Baseline)')
                 ax.contour(self.X, self.Y, mv_grid_values, levels=[0], colors='k', linewidths=1, linestyles='--')
+                
                 cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f')) # 2 decimals for Delta V
                 
                 add_overlays(ax, show_legend=False)
@@ -1143,12 +1856,13 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Mean Yield')
                     add_overlays(ax)
                     ax.set_title("Portfolio Mean")
+                    ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 3: Portfolio Variance ---
                     ax = ax_list[3]
                     # Reversed magma: Dark=Low Var
-                    cf = ax.contourf(self.X, self.Y, grid_dict['stats']['mean_port'], 50, cmap='magma_r', alpha=0.8) 
+                    cf = ax.contourf(self.X, self.Y, grid_dict['stats']['var_port'], 50, cmap='magma_r', alpha=0.8) 
                     fig.colorbar(cf, ax=ax, label='Variance')
                     add_overlays(ax)
                     ax.set_title("Portfolio Variance")
@@ -1178,6 +1892,7 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Yield EV1')
                     add_overlays(ax)
                     ax.set_title("Single Variety Yield EV1")
+                    ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 7: Yield EV2 ---
@@ -1194,7 +1909,7 @@ class ExperimentRunner:
                     cf = ax.contourf(self.X, self.Y, grid_dict['stats']['w_c'], 50, cmap='RdYlGn', alpha=0.8)
                     fig.colorbar(cf, ax=ax, label='Adoption Rate')
                     add_overlays(ax)
-                    ax.set_title("Possible adoption shares g_new")
+                    ax.set_title("Possible adoption shares")
                     ax.set_xlabel("Genotype dim 1")
                     ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
@@ -1251,31 +1966,28 @@ class ExperimentRunner:
                     ax.legend(handles=legend_elements, loc='center', fontsize=12, frameon=True, borderpad=0.7)
                     ax.set_title("Legend", fontweight='bold')
 
-                # Use subplots_adjust instead of tight_layout for manual control over spacing
-                # hspace controls vertical space (height), wspace controls horizontal (width)
-                fig.subplots_adjust(
-                    top=0.92,
-                    bottom=0.05,
-                    left=0.05,
-                    right=0.95,
-                    hspace=0.4,
-                    wspace=0.3
-                )
+                    # Use subplots_adjust instead of tight_layout for manual control over spacing
+                    # hspace controls vertical space (height), wspace controls horizontal (width)
+                    fig.subplots_adjust(
+                        top=0.92,
+                        bottom=0.05,
+                        left=0.05,
+                        right=0.95,
+                        hspace=0.4,
+                        wspace=0.3
+                    )
 
-                # Indices of plots that are spatial heatmaps (skipping the bar chart at index 1 
-                # and the legend at index 11)
-                spatial_indices = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                    # Indices of plots that are spatial heatmaps (skipping the bar chart at index 1 
+                    # and the legend at index 11)
+                    spatial_indices = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
-                for idx in spatial_indices:
-                    if idx < len(ax_list):
-                        ax_list[idx].set_xlim([-1, 1])
-                        ax_list[idx].set_ylim([-1, 1])
+                    for idx in spatial_indices:
+                        if idx < len(ax_list):
+                            ax_list[idx].set_xlim([0, 1])
+                            ax_list[idx].set_ylim([0, 1])
 
-                # ------------------------------------------
-
-
-                result_text = output_buffer.getvalue()
-        
-        # If multiple scenarios run, 'fig' will be the last one generated, 
-        # which is correct for the GUI (it runs one at a time).
-        return result_text, fig
+                    result_text = output_buffer.getvalue()
+            
+            # If multiple scenarios run, 'fig' will be the last one generated, 
+            # which is correct for the GUI (it runs one at a time).
+            return result_text, fig

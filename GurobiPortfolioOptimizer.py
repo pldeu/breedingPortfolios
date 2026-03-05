@@ -23,6 +23,8 @@ class GurobiPortfolioOptimizer:
         self.yf = self._get_yield_vec(self.g_fixed[0], self.g_fixed[1])
         self.ym = self._get_yield_vec(self.g_mutable[0], self.g_mutable[1])
 
+        self.MVP_model = None
+
     def _get_yield_vec(self, x, y):
         """Returns array [y_env1, y_env2]"""
         return np.array([x + self.c * y, self.c * x + y])
@@ -154,6 +156,7 @@ class GurobiPortfolioOptimizer:
         if m.Status == GRB.OPTIMAL:
             g_opt = np.array([gx.X, gy.X])
             w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
+            self.MVP_model = m
             return self._build_result(g_opt, w_opt)
         elif m.Status == GRB.TIME_LIMIT:
             print('Struggling with start_B4P or B4M')
@@ -161,6 +164,68 @@ class GurobiPortfolioOptimizer:
             m.setParam("NonConvex", 2)
             m.setParam("TimeLimit", 180)
             m.optimize()
+        return None
+    
+    def change_gamma_B4P(self, gamma):
+        """
+        Updates the gamma value of the existing Gurobi model and re-optimizes.
+        This leverages Gurobi's native warm-starting to speed up NISE calculations.
+        """
+
+        # 1. Fallback: If strat_B4P hasn't been run yet, run it from scratch
+        if getattr(self, 'MVP_model', None) is None:
+            self.gamma = gamma
+            return self.strat_B4P()
+
+        m = self.MVP_model
+
+        # 2. Retrieve existing variables by name
+        gx = m.getVarByName("gx")
+        gy = m.getVarByName("gy")
+        wf = m.getVarByName("wf")
+        wc = m.getVarByName("wc")
+        wm = m.getVarByName("wm")
+        zx = m.getVarByName("zx")
+        zy = m.getVarByName("zy")
+
+        # 3. Rebuild the Objective with the NEW gamma
+        term_wc_yc1 = zx + self.c * zy
+        term_wc_yc2 = self.c * zx + zy
+        term_wf_yf1 = wf * self.yf[0]
+        term_wf_yf2 = wf * self.yf[1]
+
+        term_wm_ym1 = wm * self.ym[0]
+        term_wm_ym2 = wm * self.ym[1]
+
+        Yp1 = term_wf_yf1 + term_wm_ym1 + term_wc_yc1
+        Yp2 = term_wf_yf2 + term_wm_ym2 + term_wc_yc2
+
+        mu_p = self.p * Yp1 + (1 - self.p) * Yp2
+        E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
+
+        # Apply the new objective
+        obj = mu_p - 0.5 * gamma * (E_Yp2 - mu_p * mu_p)
+        m.setObjective(obj, GRB.MAXIMIZE)
+
+        # 4. Re-optimize
+        m.optimize()
+
+        # 5. Extract and return results
+        if m.Status == GRB.OPTIMAL:
+            g_opt = np.array([gx.X, gy.X])
+            w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
+            return self._build_result(g_opt, w_opt)
+            
+        elif m.Status == GRB.TIME_LIMIT:
+            print(f'Struggling with change_gamma_B4P for gamma={gamma}. Increasing time limit.')
+            m.setParam("TimeLimit", 180)
+            m.optimize()
+            if m.Status == GRB.OPTIMAL:
+                g_opt = np.array([gx.X, gy.X])
+                w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
+                return self._build_result(g_opt, w_opt)
+                
+        # Return None if it fails to find an optimal solution even after time extension
         return None
 
     def strat_B4M(self):
@@ -361,7 +426,7 @@ class GurobiPortfolioOptimizer:
 
         if abs(bench_util_up - bench_util_low) < 1e-5:
             #print('Max-share = 0')
-            return bench_util_up
+            return self.strat_B4P()
 
         # If we can't improve by at least epsilon, the solver will be infeasible.
         if bench_util_low > 0:
