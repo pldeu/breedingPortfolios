@@ -159,17 +159,18 @@ with st.spinner("Simulating..."):
             plot_extensive=True, 
             easy_base=False, 
             no_plot=False, 
-            plot_right=True
+            plot_right=True,
+            dpi=150
         )
+
+        with tab_report:
+            st.text_area("Output", text_result, height=400, disabled=True)
 
         with tab_viz:
             if fig:
                 st.pyplot(fig)
             else:
                 st.warning("No plot generated.")
-
-        with tab_report:
-            st.text_area("Output", text_result, height=400, disabled=True)
 
     except Exception as e:
         st.error(f"Simulation Error: {e}")

@@ -1769,8 +1769,8 @@ class ExperimentRunner:
                 Cov_grid = (self.p * (yf_1 - mu_f) * (yc_1 - mu_c)) + \
                         ((1 - self.p) * (yf_2 - mu_f) * (yc_2 - mu_c))
 
-                fig = Figure(figsize=(15.55, 9.6), dpi=100) 
-                axs = fig.subplots(3, 4)
+                fig = Figure(figsize=(15.55, 9.6), dpi=dpi) 
+                axs = fig.subplots(4, 4)
                 # Flatten axes list for unified 0-11 indexing regardless of grid shape
                 # Order matches reading direction (Left->Right, Top->Bottom)
                 ax_list = axs.flatten()
@@ -1799,9 +1799,287 @@ class ExperimentRunner:
                                                 s=120, label=s_name, zorder=11)
 
                     if show_legend:
-                        # Smart legend positioning based on anchor location
-                        loc = 'lower left' if (g_fixed[0] > 0 or g_fixed[1] > 0) else 'lower right'
+                    # Smart legend positioning based on anchor location
+                        if g_fixed[0]:
+                            loc = 'left'
+                        else:
+                            loc = 'right'
+                        if g_mutable[1]:
+                            loc = 'lower ' + loc
+                        else:
+                            loc = 'upper ' + loc
                         ax_target.legend(loc=loc, fontsize='small', framealpha=0.8)
+                def compute_analytical_overlay(grid_dict):
+                    """
+                    Compute analytical MVP, BB, BBS points and condition regions
+                    on the (g_new_1, g_new_2) grid.
+                    
+                    Returns a dict with everything needed for plotting.
+                    """
+                    # --- Extract parameters ---
+                    g_f = grid_dict['g_fixed']       # (g_f1, g_f2)
+                    g_m = grid_dict['g_mutable']     # (g_m1, g_m2)
+                    gamma = grid_dict['gamma']
+                    p = grid_dict['p']
+                    c = grid_dict['c']
+                    R = grid_dict['R']
+                    r_g = grid_dict['r_g']           # rho_g
+                    X = grid_dict['X']               # grid of g_new_1
+                    Y = grid_dict['Y']               # grid of g_new_2
+
+                    # Derived constants
+                    mu = (1 + c) / 2
+                    S = p * (1 - p) * (1 - c)**2
+                    A = gamma * S
+
+                    # Sufficient statistics of fixed and mutable
+                    s_f = g_f[0] + g_f[1]
+                    d_f = g_f[0] - g_f[1]
+                    s_m = g_m[0] + g_m[1]
+                    d_m = g_m[0] - g_m[1]
+
+                    # Ellipse semi-axes
+                    r_s = R * np.sqrt(2 * (1 + r_g))
+                    r_d = R * np.sqrt(2 * (1 - r_g))
+
+                    # Gap parameters
+                    alpha = s_m - s_f
+                    delta = d_m - d_f
+
+                    # Utility of incumbent
+                    U_f = mu * s_f - (A / 2) * d_f**2
+
+                    # --- Grid sufficient statistics ---
+                    S_grid = X + Y           # s_new for each grid point
+                    D_grid = X - Y           # d_new for each grid point
+
+                    # --- V_fn for each grid point ---
+                    # P and Q for portfolio (incumbent + new)
+                    P_grid = mu * (S_grid - s_f) - A * d_f * (D_grid - d_f)
+                    Q_grid = D_grid - d_f
+                    Q2_grid = Q_grid**2
+                    Q2_safe = np.where(Q2_grid > 1e-20, Q2_grid, 1e-20)
+
+                    w_grid = P_grid / (A * Q2_safe)
+
+                    # Standalone utility of each grid point
+                    U_grid = mu * S_grid - (A / 2) * D_grid**2
+
+                    # Full V_fn across regimes
+                    V_interior = U_f + P_grid**2 / (2 * A * Q2_safe)
+                    V_grid = np.where(w_grid <= 0, U_f,
+                            np.where(w_grid >= 1, U_grid, V_interior))
+
+                    # --- BB solution ---
+                    # theta_BB = 0: Delta_s = r_s, Delta_d = 0
+                    s_BB = s_m + r_s
+                    d_BB = d_m
+                    g_BB = np.array([(s_BB + d_BB) / 2, (s_BB - d_BB) / 2])
+                    U_BB = mu * s_BB - (A / 2) * d_BB**2
+                    P_BB = mu * (s_BB - s_f) - A * d_f * (d_BB - d_f)
+                    Q_BB = d_BB - d_f
+                    w_BB = P_BB / (A * Q_BB**2) if abs(Q_BB) > 1e-12 else np.inf
+                    if w_BB <= 0:
+                        V_BB = U_f
+                    elif w_BB >= 1:
+                        V_BB = U_BB
+                    else:
+                        V_BB = U_f + P_BB**2 / (2 * A * Q_BB**2)
+
+                    # --- BBS solution (numerical on boundary) ---
+                    # Evaluate U on ellipse boundary and pick the max
+                    theta_fine = np.linspace(0, 2 * np.pi, 10000)
+                    ds_fine = r_s * np.cos(theta_fine)
+                    dd_fine = r_d * np.sin(theta_fine)
+                    s_fine = s_m + ds_fine
+                    d_fine = d_m + dd_fine
+                    U_fine = mu * s_fine - (A / 2) * d_fine**2
+                    idx_BBS = np.argmax(U_fine)
+                    theta_BBS = theta_fine[idx_BBS]
+                    s_BBS = s_fine[idx_BBS]
+                    d_BBS = d_fine[idx_BBS]
+                    g_BBS = np.array([(s_BBS + d_BBS) / 2, (s_BBS - d_BBS) / 2])
+                    U_BBS = U_fine[idx_BBS]
+                    # V_fn at BBS point
+                    P_BBS = mu * (s_BBS - s_f) - A * d_f * (d_BBS - d_f)
+                    Q_BBS = d_BBS - d_f
+                    w_BBS_port = P_BBS / (A * Q_BBS**2) if abs(Q_BBS) > 1e-12 else np.inf
+                    if w_BBS_port <= 0:
+                        V_BBS = U_f
+                    elif w_BBS_port >= 1:
+                        V_BBS = U_BBS
+                    else:
+                        V_BBS = U_f + P_BBS**2 / (2 * A * Q_BBS**2)
+
+                    # --- MVP solution (analytical) ---
+                    L_tilde = np.sqrt(alpha**2 * r_d**2 + delta**2 * r_s**2)
+                    feasible = L_tilde >= r_s * r_d
+
+                    if feasible and abs(L_tilde) > 1e-12:
+                        base_angle = np.arctan2(delta * r_s, alpha * r_d)
+                        cos_arg = np.clip(r_s * r_d / L_tilde, -1, 1)
+                        delta_angle = np.arccos(cos_arg)
+
+                        theta1 = np.pi + base_angle + delta_angle
+                        theta2 = np.pi + base_angle - delta_angle
+
+                        def eval_V(theta):
+                            sn = s_m + r_s * np.cos(theta)
+                            dn = d_m + r_d * np.sin(theta)
+                            U_new = mu * sn - (A / 2) * dn**2
+                            P_ = mu * (sn - s_f) - A * d_f * (dn - d_f)
+                            Q_ = dn - d_f
+                            if abs(Q_) < 1e-12:
+                                return U_new, 1.0
+                            w_ = P_ / (A * Q_**2)
+                            if w_ <= 0:
+                                return U_f, w_
+                            elif w_ >= 1:
+                                return U_new, w_
+                            else:
+                                return U_f + P_**2 / (2 * A * Q_**2), w_
+
+                        V1, w1 = eval_V(theta1)
+                        V2, w2 = eval_V(theta2)
+
+                        if V1 >= V2:
+                            theta_MVP = theta1
+                            V_MVP_val = V1
+                            w_MVP_val = w1
+                        else:
+                            theta_MVP = theta2
+                            V_MVP_val = V2
+                            w_MVP_val = w2
+
+                        s_MVP = s_m + r_s * np.cos(theta_MVP)
+                        d_MVP = d_m + r_d * np.sin(theta_MVP)
+                        g_MVP = np.array([(s_MVP + d_MVP) / 2, (s_MVP - d_MVP) / 2])
+                    else:
+                        # Infeasible interior: fall back to BBS
+                        theta_MVP = theta_BBS
+                        V_MVP_val = V_BBS
+                        w_MVP_val = w_BBS_port
+                        g_MVP = g_BBS
+
+                    # --- Condition grids ---
+                    # For each grid point: does V_fn(g_new) > V_BB? (feasible region only)
+                    beats_BB = V_grid > V_BB + 1e-10
+                    beats_BBS = V_grid > V_BBS + 1e-10
+
+                    # Feasibility mask (on the ellipse)
+                    feasible_mask = grid_dict.get('feasible_mask', np.ones_like(X, dtype=bool))
+
+                    return {
+                        # Grid data
+                        'V_grid': V_grid, 'w_grid': w_grid, 'U_grid': U_grid,
+                        'beats_BB': beats_BB, 'beats_BBS': beats_BBS,
+                        'feasible_mask': feasible_mask,
+                        # Reference values
+                        'V_BB': V_BB, 'V_BBS': V_BBS, 'V_MVP': V_MVP_val,
+                        'U_BB': U_BB, 'U_BBS': U_BBS,
+                        'w_BB': w_BB, 'w_MVP': w_MVP_val,
+                        # Optimal points in (g1, g2) space
+                        'g_BB': g_BB, 'g_BBS': g_BBS, 'g_MVP': g_MVP,
+                        'g_f': g_f, 'g_m': g_m,
+                        # Angles
+                        'theta_BB': 0.0, 'theta_BBS': theta_BBS, 'theta_MVP': theta_MVP,
+                        # Ellipse params
+                        'r_s': r_s, 'r_d': r_d, 's_m': s_m, 'd_m': d_m,
+                    }
+
+
+                def plot_mvp_conditions(ax_bb, ax_bbs, grid_dict, overlay_data=None):
+                    """
+                    Plot two subplots showing where MVP beats BB (left) and BBS (right).
+                    
+                    Parameters
+                    ----------
+                    ax_bb : matplotlib axis for the MVP > BB panel
+                    ax_bbs : matplotlib axis for the MVP > BBS panel
+                    grid_dict : your existing grid_dict
+                    overlay_data : output of compute_analytical_overlay (computed if None)
+                    """
+                    if overlay_data is None:
+                        overlay_data = compute_analytical_overlay(grid_dict)
+
+                    X = grid_dict['X']
+                    Y = grid_dict['Y']
+                    od = overlay_data
+                    
+                    # --- Left panel: V_fn(g_new) vs V_BB ---
+                    # Show V_grid - V_BB as heatmap (red = worse, blue = better)
+                    # --- Left panel: V_fn(g_new) vs V_BB ---
+                    diff_BB = od['V_grid'] - od['V_BB']
+                    vmax_bb = np.max(diff_BB)
+                    vmin_bb = np.min(diff_BB)
+
+                    # Plot
+                    cf_bb = ax_bb.contourf(X, Y, diff_BB, levels=np.linspace(vmin_bb, vmax_bb, 50), cmap='RdBu', alpha=0.8)
+                    contour_bb = ax_bb.contour(X, Y, diff_BB, levels=[0], colors='black', linewidths=1.5, linestyles=':')
+                    contour_w0 = ax_bb.contour(X, Y, od['w_grid'], levels=[0], colors='magenta', linewidths=2, linestyles=':')
+                    contour_w1 = ax_bb.contour(X, Y, od['w_grid'], levels=[1], colors='orange', linewidths=2, linestyles=':')
+
+                    # Collect legend handles and labels
+                    handles = [
+                        plt.Line2D([0], [0], color='black', linestyle=':', linewidth=1.5),  # 'Same value as BB'
+                        plt.Line2D([0], [0], color='magenta', linestyle=':', linewidth=2),  # '$w^*=0$'
+                        plt.Line2D([0], [0], color='orange', linestyle=':', linewidth=2),  # '$w^*=1$'
+                    ]
+                    labels = [
+                        'MVP = BB',
+                        '$w(\mathbf{g}_{\\mathrm{new}})=0$',
+                        '$w(\mathbf{g}_{\\mathrm{new}})=1$',
+                    ]
+                    ax_bb.set_ylabel("Genotype dim 2")
+                    ax_bb.set_xlabel("Genotype dim 1")
+
+                    # Add overlays without legend
+                    add_overlays(ax_bb, show_legend=False)
+
+                    # Add combined legend
+                    ax_bb.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
+
+                    cb_bb = plt.colorbar(cf_bb, ax=ax_bb)
+                    cb_bb.set_label('$V_{fn}(\\mathbf{g}_{\\mathrm{new}}) - V_{fn}(\\mathbf{g}^{BB})$')
+                    ax_bb.set_title('MVP vs BB')
+                    
+
+                    # --- Right panel: V_fn(g_new) vs V_BBS ---
+                    diff_BBS = od['V_grid'] - od['V_BBS']
+                    vmax_bbs = np.max(diff_BBS)
+                    vmin_bbs = np.min(diff_BBS)
+
+                    # Plot
+                    cf_bbs = ax_bbs.contourf(X, Y, diff_BBS, levels=np.linspace(vmin_bbs, vmax_bbs, 50), cmap='RdBu', alpha=0.8)
+                    contour_bbs = ax_bbs.contour(X, Y, diff_BBS, levels=[0], colors='black', linewidths=1.5, linestyles=':')
+                    contour_w0 = ax_bbs.contour(X, Y, od['w_grid'], levels=[0], colors='magenta', linewidths=1, linestyles=':')
+                    contour_w1 = ax_bbs.contour(X, Y, od['w_grid'], levels=[1], colors='orange', linewidths=1, linestyles=':')
+
+                    # Collect legend handles and labels
+                    handles = [
+                        plt.Line2D([0], [0], color='black', linestyle=':', linewidth=1.5),  # 'Same value as BBS'
+                        plt.Line2D([0], [0], color='magenta', linestyle=':', linewidth=1),  # 'Only fixed'
+                        plt.Line2D([0], [0], color='orange', linestyle=':', linewidth=1),  # 'Only mutable'
+                    ]
+                    labels = [
+                        'MVP = BBS',
+                        '$w(\mathbf{g}_{\\mathrm{new}})=0$',
+                        '$w(\mathbf{g}_{\\mathrm{new}})=1$',
+                    ]
+
+                    ax_bbs.set_xlabel("Genotype dim 1")
+
+                    # Add overlays without legend
+                    add_overlays(ax_bbs, show_legend=False)
+
+                    # Add combined legend
+                    ax_bbs.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
+
+                    cb_bbs = plt.colorbar(cf_bbs, ax=ax_bbs)
+                    cb_bbs.set_label('$V_{fn}(\\mathbf{g}_{\\mathrm{new}}) - V_{fn}(\\mathbf{g}^{BBS})$')
+                    ax_bbs.set_title('MVP vs BBS')
+
+                    return overlay_data
 
                 # ==========================================
                 # ============ PLOTTING ROUTINE ============
@@ -1910,7 +2188,6 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Adoption Rate')
                     add_overlays(ax)
                     ax.set_title("Possible adoption shares")
-                    ax.set_xlabel("Genotype dim 1")
                     ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
 
@@ -1920,7 +2197,6 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Weight mutable')
                     add_overlays(ax)
                     ax.set_title("Possible adoption shares g_mut")
-                    ax.set_xlabel("Genotype dim 1")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 10: Covariance ---
@@ -1945,6 +2221,10 @@ class ExperimentRunner:
                     # --- Plot 11: Correlation ---
                     ax = ax_list[11]
                     ax.axis('off')  # Hide axis, ticks, border
+
+                    overlay_data = compute_analytical_overlay(grid_dict)
+                    # As standalone figure:
+                    plot_mvp_conditions(ax_list[12], ax_list[13], grid_dict, overlay_data)
                     
                     # Build Custom Legend Handles
                     legend_elements = [
@@ -1963,8 +2243,10 @@ class ExperimentRunner:
                         )
 
                     # Draw the legend in the center of the subplot
-                    ax.legend(handles=legend_elements, loc='center', fontsize=12, frameon=True, borderpad=0.7)
+                    ax.legend(handles=legend_elements, loc='center', fontsize=9, frameon=True, borderpad=0.7)
                     ax.set_title("Legend", fontweight='bold')
+
+                    
 
                     # Use subplots_adjust instead of tight_layout for manual control over spacing
                     # hspace controls vertical space (height), wspace controls horizontal (width)
@@ -1979,7 +2261,7 @@ class ExperimentRunner:
 
                     # Indices of plots that are spatial heatmaps (skipping the bar chart at index 1 
                     # and the legend at index 11)
-                    spatial_indices = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                    spatial_indices = [0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13]
 
                     for idx in spatial_indices:
                         if idx < len(ax_list):
