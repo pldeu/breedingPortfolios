@@ -2134,7 +2134,6 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Mean Yield')
                     add_overlays(ax)
                     ax.set_title("Portfolio Mean")
-                    ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 3: Portfolio Variance ---
@@ -2170,7 +2169,6 @@ class ExperimentRunner:
                     fig.colorbar(cf, ax=ax, label='Yield EV1')
                     add_overlays(ax)
                     ax.set_title("Single Variety Yield EV1")
-                    ax.set_ylabel("Genotype dim 2")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 7: Yield EV2 ---
@@ -2215,7 +2213,6 @@ class ExperimentRunner:
                     
                     add_overlays(ax)
                     ax.set_title("Covariance (Cand vs Fixed)\nBlue = Good Hedge")
-                    ax.set_xlabel("Genotype dim 1")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 11: Correlation ---
@@ -2225,6 +2222,9 @@ class ExperimentRunner:
                     overlay_data = compute_analytical_overlay(grid_dict)
                     # As standalone figure:
                     plot_mvp_conditions(ax_list[12], ax_list[13], grid_dict, overlay_data)
+
+                    for idx in [14, 15]:
+                        ax_list[idx].axis('off')  # Hide axes, ticks, and rectangle
                     
                     # Build Custom Legend Handles
                     legend_elements = [
