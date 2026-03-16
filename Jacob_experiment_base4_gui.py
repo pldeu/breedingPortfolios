@@ -2097,7 +2097,7 @@ class ExperimentRunner:
                 cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f')) # 2 decimals for Delta V
                 
                 add_overlays(ax, show_legend=False)
-                ax.set_title(f"{label}\nPortfolio Value Added")
+                ax.set_title("Portfolio Value Added")
                 ax.set_ylabel("Genotype dim 2")
                 ax.grid(True, alpha=0.3)
 
@@ -2212,7 +2212,7 @@ class ExperimentRunner:
                     ax.contour(self.X, self.Y, Cov_grid, levels=[0], colors='k', linewidths=1, linestyles='--')
                     
                     add_overlays(ax)
-                    ax.set_title("Covariance (Cand vs Fixed)\nBlue = Good Hedge")
+                    ax.set_title("Covariance (Cand vs Fixed)")
                     ax.grid(True, alpha=0.3)
 
                     # --- Plot 11: Correlation ---
