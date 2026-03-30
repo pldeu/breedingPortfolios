@@ -93,7 +93,7 @@ class GurobiPortfolioOptimizer:
             
         return None
 
-    def strat_B4P(self):
+    def strat_B4P(self, w_f_given=None, w_m_given=None):
         """
         Maximize Portfolio Utility (Joint Optimization).
         """
@@ -114,6 +114,12 @@ class GurobiPortfolioOptimizer:
         wf = m.addVar(lb=0, ub=1, name="wf")
         wc = m.addVar(lb=0, ub=1, name="wc")
         wm = m.addVar(lb=0, ub=1, name="wm") if not self.replace else m.addVar(lb=0, ub=0, name="wm")
+
+        if w_f_given != None:
+            m.addConstr(wf == w_f_given)
+
+        if w_m_given != None:
+            m.addConstr(wf == w_m_given)
 
         # Auxiliary variables for Bilinear terms: z = w * g
         # Since w is in [0, 1], z must be between [min(0, g_min), max(0, g_max)]
@@ -233,10 +239,10 @@ class GurobiPortfolioOptimizer:
         Maximize Portfolio Mean Yield (Risk Neutral).
         """
         original_gamma = self.gamma
-        self.gamma = 1e-8  # Effectively maximize Mean
+        self.gamma = 0# 1e-8  # Effectively maximize Mean
 
         # result is already in the correct dict format
-        result = self.strat_B4P()
+        result = self.strat_B4P(w_f_given=0.0, w_m_given=0.0)
 
         self.gamma = original_gamma  # Restore
         return result

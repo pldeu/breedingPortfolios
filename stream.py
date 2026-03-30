@@ -161,7 +161,7 @@ with st.spinner("Simulating…"):
             R=st.session_state.R_var,
             scenario_pairs=scenario_pairs,
             replace=False,
-            n=201,
+            n=401,
         )
 
         text_result, scenario_data_list = runner.compute(

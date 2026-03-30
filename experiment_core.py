@@ -24,9 +24,9 @@ from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
 # ---------------------------------------------------------------------------
 STRATEGY_REGISTRY = {
     'Base':         {'label': 'Baseline',                 'group': 'benchmark'},
-    'Mean':         {'label': 'Maximize Mean',            'group': 'primary'},
-    'MVP':          {'label': 'Portfolio Utility',        'group': 'primary'},
-    'BeatBest':     {'label': 'Beat Best',                'group': 'primary'},
+    'Mean':         {'label': 'BB',                       'group': 'primary'},
+    'MVP':          {'label': 'MVP',                      'group': 'primary'},
+    'BeatBest':     {'label': 'Beat Best S',                'group': 'primary'},
     'Adopt':        {'label': 'Max Adoption',       'group': 'primary'},
     'Clairv':       {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
@@ -38,7 +38,7 @@ DEFAULT_STRATEGY_KEYS = ['Base', 'Mean', 'MVP', 'BeatBest', 'Adopt', 'Clairv']
 class ExperimentRunner:
 # ---------------------------------------------------------------------------
 
-    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=201):
+    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=401):
         self.p = p
         self.c = c
         self.beta1 = np.array([1.0, c])
@@ -53,8 +53,8 @@ class ExperimentRunner:
         self.lim = 1.0
         self.n = n
         self.scenario_pairs = scenario_pairs
-        self.x = np.linspace(-self.lim, self.lim, self.n)
-        self.y = np.linspace(-self.lim, self.lim, self.n)
+        self.x = np.linspace(0, self.lim, self.n)
+        self.y = np.linspace(0, self.lim, self.n)
         self.X, self.Y = np.meshgrid(self.x, self.y)
         self.replace = replace
         self.grid_dict = None
@@ -1167,6 +1167,7 @@ class ExperimentRunner:
             subplot_ids = DEFAULT_SUBPLOT_IDS
         if not scenario_data_list:
             return fig
+        
 
         sd = scenario_data_list[0]
         sd['marker_alpha'] = marker_alpha
@@ -1294,7 +1295,7 @@ class ExperimentRunner:
                 r"    \midrule",
                 f"    Baseline & {base['mean_variance']:.4f} & {0:.4f}"
                 f" & {base['mean']:.4f} & {base['variance']:.4f}"
-                f" & \\texttt{{{weight_str(base['weights'])}}} \\\\",
+                f" & {weight_str(base['weights'])} \\\\",
             ]
 
             for res in results:
@@ -1304,7 +1305,7 @@ class ExperimentRunner:
                 lines.append(
                     f"    {name} & {s['mean_variance']:.4f} & {s['gain']:.4f}"
                     f" & {s['mean']:.4f} & {s['variance']:.4f}"
-                    f" & \\texttt{{{weight_str(d['weights'])}}} \\\\"
+                    f" & {weight_str(d['weights'])} \\\\"
                 )
 
             lines += [
