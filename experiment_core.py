@@ -1188,6 +1188,21 @@ class ExperimentRunner:
         for j in range(n, len(ax_list)):
             ax_list[j].axis('off')
 
+        # Show "Genotype dim 1" x-label only on the effective bottom row of each column,
+        # and "Genotype dim 2" y-label only on the leftmost column.
+        for i in range(n):
+            ax = ax_list[i]
+            row = i // ncols
+            col = i % ncols
+            # Leftmost column: keep y-label; all others: clear it
+            if col != 0 and ax.get_ylabel() == "Genotype dim 2":
+                ax.set_ylabel("")
+            # Bottom of this column: keep x-label; all others: clear it
+            # A subplot is at the bottom if the slot directly below it is empty or out of range
+            below = (row + 1) * ncols + col
+            if below < n and ax.get_xlabel() == "Genotype dim 1":
+                ax.set_xlabel("")
+
         fig.subplots_adjust(top=0.92, bottom=0.05, left=0.05, right=0.95,
                             hspace=0.4, wspace=0.3)
         return fig

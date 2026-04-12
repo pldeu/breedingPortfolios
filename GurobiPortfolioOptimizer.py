@@ -52,46 +52,8 @@ class GurobiPortfolioOptimizer:
         """
         BeatBest: Maximize Standalone Utility of Candidate.
         """
-        m = gp.Model("BeatBest")
-        m.setParam("OutputFlag", 0)
-        
-        # --- 1. Apply Bounds ---
-        (xb_min, xb_max), (yb_min, yb_max) = self._get_ellipse_bounds()
-        
-        x = m.addVar(lb=xb_min, ub=xb_max, name="x")
-        y = m.addVar(lb=yb_min, ub=yb_max, name="y")
-        
-        # 2. Constraint
-        self._add_mahalanobis_constraint(m, x, y)
-        
-        # 3. Objective Construction
-        yc1 = x + self.c * y
-        yc2 = self.c * x + y
-        
-        mu_c = self.p * yc1 + (1 - self.p) * yc2
-        E_y2 = self.p * (yc1 * yc1) + (1 - self.p) * (yc2 * yc2)
-        
-        # NonConvex=2 is safe here even if convex, ensures robustness
-        m.setParam("NonConvex", 2)
-        m.setParam("TimeLimit", 60) 
-        
-        obj = mu_c - 0.5 * self.gamma * (E_y2 - mu_c * mu_c)
-        m.setObjective(obj, GRB.MAXIMIZE)
-        
-        m.optimize()
-        
-        if m.Status == GRB.OPTIMAL:
-            g_opt = np.array([x.X, y.X])
-            w_opt = {'wf': 0.0, 'wm': 0.0, 'wc': 1.0}
-            return self._build_result(g_opt, w_opt)
-        elif m.Status == GRB.TIME_LIMIT:
-            print('Struggling with start_BB')
-            m.setParam("OutputFlag", 0)
-            m.setParam("NonConvex", 2)
-            m.setParam("TimeLimit", 180)
-            m.optimize()
-            
-        return None
+        result = self.strat_B4P(w_f_given=0.0, w_m_given=0.0)
+        return result
 
     def strat_B4P(self, w_f_given=None, w_m_given=None):
         """

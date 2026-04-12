@@ -489,6 +489,303 @@ def _render_legend(ax, sd):
               frameon=True, borderpad=0.7)
     ax.set_title("Legend", fontweight='bold')
 
+def _render_mvp_line(ax, sd):
+    """
+    MVP line and ellipse intersection in (g_new_1, g_new_2) space (plot 14).
+    Shows the MVP line alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1,
+    the breeding ellipse, and the two candidate solutions.
+    """
+    X, Y = sd['X'], sd['Y']
+    od = _get_overlay_data(sd)
+
+    r_s, r_d = od['r_s'], od['r_d']
+    s_m, d_m = od['s_m'], od['d_m']
+    g_f, g_m = od['g_f'], od['g_m']
+
+    s_f = g_f[0] + g_f[1]
+    d_f = g_f[0] - g_f[1]
+    alpha = s_m - s_f
+    delta = d_m - d_f
+
+    mu = (1 + sd['c']) / 2
+    S = sd['p'] * (1 - sd['p']) * (1 - sd['c']) ** 2
+    A = sd['grid_dict']['gamma'] * S
+
+    # Background: V_fn heatmap
+    cf = ax.contourf(X, Y, od['V_grid'], levels=50, cmap='viridis', alpha=0.7)
+    ax.get_figure().colorbar(cf, ax=ax).set_label(r'$V_{fn}(\mathbf{g}_{\mathrm{new}})$')
+
+    # MVP line: alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1
+    # In (Delta_s, Delta_d) space this is a line.
+    # We convert to (g1, g2) by: Delta_s = (g1-g_m1) + (g2-g_m2),
+    #                             Delta_d = (g1-g_m1) - (g2-g_m2)
+    # So: alpha/r_s^2 * [(g1-gm1)+(g2-gm2)] + delta/r_d^2 * [(g1-gm1)-(g2-gm2)] = -1
+    # => g1 * (alpha/r_s^2 + delta/r_d^2) + g2 * (alpha/r_s^2 - delta/r_d^2)
+    #    = -1 + g_m1*(alpha/r_s^2 + delta/r_d^2) + g_m2*(alpha/r_s^2 - delta/r_d^2)
+    coeff_g1 = alpha / r_s ** 2 + delta / r_d ** 2
+    coeff_g2 = alpha / r_s ** 2 - delta / r_d ** 2
+    rhs = -1 + g_m[0] * coeff_g1 + g_m[1] * coeff_g2
+
+    # Plot the line over the axis range
+    xlim = ax.get_xlim() if ax.get_xlim() != (0.0, 1.0) else (X.min(), X.max())
+    g1_line = np.linspace(X.min(), X.max(), 500)
+    if abs(coeff_g2) > 1e-12:
+        g2_line = (rhs - coeff_g1 * g1_line) / coeff_g2
+        mask = (g2_line >= Y.min()) & (g2_line <= Y.max())
+        ax.plot(g1_line[mask], g2_line[mask], 'r-', linewidth=2.5,
+                label='MVP line')
+    else:
+        # Vertical line
+        if abs(coeff_g1) > 1e-12:
+            g1_val = rhs / coeff_g1
+            ax.axvline(g1_val, color='r', linewidth=2.5, label='MVP line')
+
+    _add_overlays(ax, sd)
+
+    # w* = 0 and w* = 1 contours
+    #ax.contour(X, Y, od['w_grid'], levels=[0], colors='magenta',
+    #           linewidths=1.5, linestyles=':')
+    #ax.contour(X, Y, od['w_grid'], levels=[1], colors='orange',
+    #           linewidths=1.5, linestyles=':')
+
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
+    #ax.legend(loc='best', fontsize='small', framealpha=0.8)
+    ax.set_title('MVP Line: '
+                 r'$\frac{\alpha}{r_s^2}\Delta s + \frac{\delta}{r_d^2}\Delta d = -1$')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+
+
+def _render_appraisal_ratio(ax, sd):
+    """
+    Appraisal ratio |P/Q| heatmap over (g_new_1, g_new_2) space (plot 15).
+    Shows the squared information ratio P^2/Q^2 that MVP maximises,
+    with the MVP line and breeding ellipse overlaid.
+    """
+    X, Y = sd['X'], sd['Y']
+    od = _get_overlay_data(sd)
+
+    r_s, r_d = od['r_s'], od['r_d']
+    g_f, g_m = od['g_f'], od['g_m']
+
+    s_f = g_f[0] + g_f[1]
+    d_f = g_f[0] - g_f[1]
+    s_m = g_m[0] + g_m[1]
+    d_m = g_m[0] - g_m[1]
+    alpha = s_m - s_f
+    delta = d_m - d_f
+
+    mu = (1 + sd['c']) / 2
+    S = sd['p'] * (1 - sd['p']) * (1 - sd['c']) ** 2
+    A = sd['grid_dict']['gamma'] * S
+
+    S_grid = X + Y
+    D_grid = X - Y
+
+    # Risk-free part P1 = mu * (s_new - s_f)
+    P1_grid = mu * (S_grid - s_f)
+    Q_grid = D_grid - d_f
+    Q_safe = np.where(np.abs(Q_grid) > 1e-10, Q_grid, np.nan)
+
+    # Appraisal ratio (risk-free): P1/Q
+    AR_grid = P1_grid / Q_safe
+    AR2_grid = AR_grid ** 2
+
+    # Clip for visualisation
+    AR2_clipped = np.clip(AR2_grid, 0, np.nanpercentile(AR2_grid, 98))
+
+    cf = ax.contourf(X, Y, AR2_clipped, levels=50, cmap='inferno', alpha=0.8)
+    ax.get_figure().colorbar(cf, ax=ax).set_label(r'$(P_1/Q)^2$ (risk-free appraisal ratio$^2$)')
+
+
+    # MVP line
+    coeff_g1 = alpha / r_s ** 2 + delta / r_d ** 2
+    coeff_g2 = alpha / r_s ** 2 - delta / r_d ** 2
+    rhs = -1 + g_m[0] * coeff_g1 + g_m[1] * coeff_g2
+    g1_line = np.linspace(X.min(), X.max(), 500)
+    if abs(coeff_g2) > 1e-12:
+        g2_line = (rhs - coeff_g1 * g1_line) / coeff_g2
+        mask = (g2_line >= Y.min()) & (g2_line <= Y.max())
+        ax.plot(g1_line[mask], g2_line[mask], 'r-', linewidth=2.5, label='MVP line')
+
+    # Q = 0 line (singularity): d_new = d_f => g1 - g2 = d_f
+    g1_q0 = np.linspace(X.min(), X.max(), 100)
+    g2_q0 = g1_q0 - d_f
+    mask_q0 = (g2_q0 >= Y.min()) & (g2_q0 <= Y.max())
+    ax.plot(g1_q0[mask_q0], g2_q0[mask_q0], 'c--', linewidth=1.5,
+            alpha=0.7, label=r'$Q=0$ ($d_{\mathrm{new}}=d_f$)')
+
+    # Mark solutions
+    _add_overlays(ax, sd)
+
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
+    ax.legend(loc='best', fontsize='small', framealpha=0.8)
+    ax.set_title(r'Appraisal ratio $(P_1/Q)^2$: MVP maximises this on the ellipse')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+
+
+def _render_selection_indices(ax, sd):
+    """
+    Comparison of BB, BBS, and MVP selection index directions (plot 16).
+    Shows the three index directions as arrows from the mutable parent,
+    with iso-index lines for each, overlaid on the portfolio value heatmap.
+    """
+    X, Y = sd['X'], sd['Y']
+    od = _get_overlay_data(sd)
+
+    r_s, r_d = od['r_s'], od['r_d']
+    g_f, g_m = od['g_f'], od['g_m']
+    s_m, d_m = od['s_m'], od['d_m']
+
+    s_f = g_f[0] + g_f[1]
+    d_f = g_f[0] - g_f[1]
+    alpha = s_m - s_f
+    delta = d_m - d_f
+
+    mu = (1 + sd['c']) / 2
+    S = sd['p'] * (1 - sd['p']) * (1 - sd['c']) ** 2
+    A = sd['grid_dict']['gamma'] * S
+
+    # Background: V_fn heatmap
+    cf = ax.contourf(X, Y, od['V_grid'], levels=50, cmap='viridis', alpha=0.5)
+    ax.get_figure().colorbar(cf, ax=ax).set_label(r'$V_{fn}(\mathbf{g}_{\mathrm{new}})$')
+
+
+    # --- Index weights in (s,d) space ---
+    # BB: a = (mu, 0)
+    a_BB_s, a_BB_d = mu, 0.0
+    # BBS (local): a = (mu, -A*d_m)
+    a_BBS_s, a_BBS_d = mu, -A * d_m
+    # MVP: a = (alpha/r_s^2, delta/r_d^2)
+    a_MVP_s, a_MVP_d = alpha / r_s ** 2, delta / r_d ** 2
+
+    def index_direction_g12(a_s, a_d):
+        """
+        Convert (s,d)-space index weights to breeding direction in (g1,g2) space.
+        The optimal direction on the ellipse is (Delta_s, Delta_d) propto (r_s^2 * a_s, r_d^2 * a_d).
+        Then g1 = (s+d)/2, g2 = (s-d)/2.
+        """
+        ds = r_s ** 2 * a_s
+        dd = r_d ** 2 * a_d
+        norm = np.sqrt(ds ** 2 + dd ** 2)
+        if norm < 1e-15:
+            return 0, 0
+        ds /= norm
+        dd /= norm
+        dg1 = (ds + dd) / 2
+        dg2 = (ds - dd) / 2
+        return dg1, dg2
+
+    arrow_scale = min(X.max() - X.min(), Y.max() - Y.min()) * 0.15
+
+    for a_s, a_d, color, name in [
+        (a_BB_s, a_BB_d, 'yellow', 'BB index'),
+        (a_BBS_s, a_BBS_d, 'lime', 'BBS index'),
+        (a_MVP_s, a_MVP_d, 'red', 'MVP index'),
+    ]:
+        dg1, dg2 = index_direction_g12(a_s, a_d)
+        ax.annotate('', xy=(g_m[0] + arrow_scale * dg1, g_m[1] + arrow_scale * dg2),
+                     xytext=(g_m[0], g_m[1]),
+                     arrowprops=dict(arrowstyle='->', color=color, lw=3),
+                     zorder=6)
+        # Text label at arrow tip
+        ax.text(g_m[0] + (arrow_scale + 0.02) * dg1,
+                g_m[1] + (arrow_scale + 0.02) * dg2,
+                name, color=color, fontsize=9, fontweight='bold',
+                ha='center', va='center', zorder=7,
+                bbox=dict(boxstyle='round,pad=0.15', facecolor='black', alpha=0.6))
+
+    # Mark solutions on the ellipse
+    _add_overlays(ax, sd)
+
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
+    ax.legend(loc='best', fontsize='small', framealpha=0.8)
+    ax.set_title('Selection index directions: BB vs BBS vs MVP')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+
+
+def _render_complementarity_ratio(ax, sd):
+    """
+    Complementarity ratio R = |delta|*r_s / (|alpha+r_s|*r_d) diagnostic (plot 17).
+    Shows a heatmap of the portfolio weight w* on the ellipse boundary,
+    with the complementarity ratio displayed as text annotation.
+    """
+    X, Y = sd['X'], sd['Y']
+    od = _get_overlay_data(sd)
+
+    r_s, r_d = od['r_s'], od['r_d']
+    g_f, g_m = od['g_f'], od['g_m']
+    s_m, d_m = od['s_m'], od['d_m']
+
+    s_f = g_f[0] + g_f[1]
+    d_f = g_f[0] - g_f[1]
+    alpha = s_m - s_f
+    delta = d_m - d_f
+
+    # Complementarity ratio
+    denom = abs(alpha + r_s) * r_d
+    if denom > 1e-12:
+        comp_ratio = abs(delta) * r_s / denom
+    else:
+        comp_ratio = np.inf
+
+    # Background: w* heatmap (clipped to [0, 1])
+    w_clipped = np.clip(od['w_grid'], 0, 1)
+    cf = ax.contourf(X, Y, w_clipped, levels=np.linspace(0, 1, 50),
+                     cmap='RdYlBu_r', alpha=0.8)
+    cb = ax.get_figure().colorbar(cf, ax=ax)
+    cb.set_label(r'$w^*(\mathbf{g}_{\mathrm{new}})$ clipped to $[0,1]$')
+
+  
+
+    # w* = 0 and w* = 1 contours
+    ax.contour(X, Y, od['w_grid'], levels=[0], colors='magenta',
+               linewidths=2, linestyles='-')
+    ax.contour(X, Y, od['w_grid'], levels=[1], colors='orange',
+               linewidths=2, linestyles='-')
+
+    _add_overlays(ax, sd)
+
+    # Annotate with complementarity ratio and diagnostic
+    if comp_ratio < 0.2:
+        verdict = "BB adequate"
+        verdict_color = 'green'
+    elif comp_ratio <= 1.0:
+        verdict = "MVP recommended"
+        verdict_color = 'orange'
+    else:
+        verdict = "MVP essential"
+        verdict_color = 'red'
+
+    textstr = (f"$\\mathcal{{R}} = {comp_ratio:.3f}$\n"
+               f"$\\alpha = {alpha:.3f}$, $\\delta = {delta:.3f}$\n"
+               f"$w^{{MVP}} = {od['w_MVP']:.3f}$\n"
+               f"Verdict: {verdict}")
+    props = dict(boxstyle='round', facecolor='white', alpha=0.9,
+                 edgecolor=verdict_color, linewidth=2)
+    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=9,
+            verticalalignment='top', bbox=props)
+
+    handles_extra = [
+        Line2D([0], [0], color='magenta', linewidth=2, linestyle='-'),
+        Line2D([0], [0], color='orange', linewidth=2, linestyle='-'),
+    ]
+    labels_extra = [r'$w^*=0$', r'$w^*=1$']
+
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
+    h, l = ax.get_legend_handles_labels()
+    ax.legend(h + handles_extra, l + labels_extra,
+              loc='lower right', fontsize='small', framealpha=0.8)
+    ax.set_title(r'Complementarity ratio $\mathcal{R}$ diagnostic')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -509,6 +806,10 @@ SUBPLOT_REGISTRY: dict = {
     'mvp_vs_bb':       SubplotSpec('mvp_vs_bb',       'MVP vs BeatBest',            'diagnostic',  _render_mvp_vs_bb),
     'mvp_vs_bbs':      SubplotSpec('mvp_vs_bbs',      'MVP vs BBS',                 'diagnostic',  _render_mvp_vs_bbs),
     'legend':          SubplotSpec('legend',          'Legend',                     'chart',       _render_legend),
+    'mvp_line':          SubplotSpec('mvp_line',          'MVP_line',                     'heatmap',       _render_mvp_line),
+    'appraisal_ratio':          SubplotSpec('appraisal_ratio',          'Appraisal Ratio',                     'heatmap',       _render_appraisal_ratio),
+    'selection_indices':          SubplotSpec('selection_indices',          'Selection Indices',                     'heatmap',       _render_selection_indices),
+    'complementarity_ratio':          SubplotSpec('complementarity_ratio',          'Complementarity Ratio',                     'heatmap',       _render_complementarity_ratio),
 }
 
 DEFAULT_SUBPLOT_IDS = [
