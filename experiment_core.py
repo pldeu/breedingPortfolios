@@ -24,14 +24,14 @@ from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
 # ---------------------------------------------------------------------------
 STRATEGY_REGISTRY = {
     'Base':         {'label': 'Baseline',                 'group': 'benchmark'},
-    'Mean':         {'label': 'BB',                       'group': 'primary'},
+    'BeatBest':         {'label': 'BB',                       'group': 'primary'},
     'MVP':          {'label': 'MVP',                      'group': 'primary'},
     'BeatBest':     {'label': 'Beat Best S',                'group': 'primary'},
-    'Adopt':        {'label': 'Max Adoption',       'group': 'primary'},
-    'Clairv':       {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
+    'MaxAdoption':        {'label': 'Max Adoption',       'group': 'primary'},
+    'Clairvoyance':       {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
-DEFAULT_STRATEGY_KEYS = ['Base', 'Mean', 'MVP', 'BeatBest', 'Adopt', 'Clairv']
+DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'MVP', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
 
 
 # ---------------------------------------------------------------------------
@@ -909,12 +909,12 @@ class ExperimentRunner:
         """Returns {name: callable} for the requested strategy keys."""
         all_strats = {
             'Base':         self._strat_base,
-            'Mean':         self._strat_B4M,
+            'BeatBest':         self._strat_B4M,
             'MVP':          self._strat_B4P,
-            'BeatBest':     self._strat_BB,
-            'Adopt':        self._strat_max_investability,
+            'BeatBestS':     self._strat_BB,
+            'MaxMarket':        self._strat_max_investability,
             'Adopt3':       self._strat_max_investability3,
-            'Clairv':       self._strat_hindsight_optimized,
+            'Clairvoyance':       self._strat_hindsight_optimized,
             'SplitEnv0B':   self._strat_splitEnv_0B,
             'SplitEnv':     self._strat_splitEnv_fixed,
             'SplitEnvFW':   self._strat_splitEnv_freeWeight,
