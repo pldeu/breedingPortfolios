@@ -24,11 +24,11 @@ from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
 # ---------------------------------------------------------------------------
 STRATEGY_REGISTRY = {
     'Base':         {'label': 'Baseline',                 'group': 'benchmark'},
-    'BeatBest':         {'label': 'BB',                       'group': 'primary'},
+    'BeatBest':     {'label': 'BeatBest',                 'group': 'primary'},
     'MVP':          {'label': 'MVP',                      'group': 'primary'},
-    'BeatBest':     {'label': 'Beat Best S',                'group': 'primary'},
-    'MaxAdoption':        {'label': 'Max Adoption',       'group': 'primary'},
-    'Clairvoyance':       {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
+    'BeatBestS':    {'label': 'BeatBestS',                'group': 'primary'},
+    'MaxAdoption':  {'label': 'Max Adoption',             'group': 'primary'},
+    'Clairvoyance': {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
 DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'MVP', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
