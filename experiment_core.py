@@ -27,7 +27,7 @@ STRATEGY_REGISTRY = {
     'BeatBest':     {'label': 'BeatBest',                 'group': 'primary'},
     'MVP':          {'label': 'MVP',                      'group': 'primary'},
     'BeatBestS':    {'label': 'BeatBestS',                'group': 'primary'},
-    'MaxAdoption':  {'label': 'Max Adoption',             'group': 'primary'},
+    'MaxMarket':  {'label': 'MaxMarket',             'group': 'primary'},
     'Clairvoyance': {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
