@@ -264,6 +264,11 @@ def _render_performance_bar(ax, sd):
     ax.axhline(0, color='k', linewidth=0.8)
     ax.set_ylim(0, 1.05 * 100)
 
+    for i, (name, gain) in enumerate(zip(strat_names, gains)):
+        if gain < 0:
+            ax.text(i, 1.5, f"{gain:.1f}", color='red', ha='center', va='bottom',
+                    fontsize=8, fontweight='bold')
+
     ax2 = ax.twinx()
     ax2.plot(strat_names, adaptions2, color='darkblue', marker='D', linestyle='None',
              markersize=8, label='Adaptation Rate (Env2)')
