@@ -170,6 +170,7 @@ with st.spinner("Simulating…"):
 
         text_result, scenario_data_list = runner.compute(
             strategy_keys=selected_strategy_keys,
+            replace=replace
         )
 
         fig = Figure(figsize=(16, 12), dpi=dpi)
