@@ -129,6 +129,10 @@ with st.sidebar:
     )
     selected_subplot_ids = [all_subplot_labels[l] for l in selected_subplot_labels]
 
+    # -- Simulation Options --
+    st.subheader("Simulation Options")
+    replace = st.toggle("Replace", value=False)
+
     # -- Visualization Options --
     st.subheader("Visualization")
     marker_alpha = st.slider("Marker opacity", 0.1, 1.0, 0.55, 0.05)
@@ -160,7 +164,7 @@ with st.spinner("Simulating…"):
             r_g=st.session_state.rg_var,
             R=st.session_state.R_var,
             scenario_pairs=scenario_pairs,
-            replace=False,
+            replace=replace,
             n=401,
         )
 
