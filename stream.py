@@ -1,6 +1,6 @@
 import os
 import sys
-
+import io
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -83,28 +83,6 @@ with st.sidebar:
         gmy = st.slider("Y", 0.0, 1.0, 0.2, 0.05, key="g_mut_y")
 
     st.markdown("---")
-
-    # -- Scenario Loader --
-    st.subheader("Scenario Selection")
-    df_full = load_data("results.csv")
-    if df_full is not None:
-        k_val = st.slider("Diversity Count (K)", 2, 50, 20)
-        df_selected = run_diversity_selection(df_full, k_val)
-        st.session_state["df_selected"] = df_selected
-        max_idx = len(df_selected) - 1
-        st.slider(
-            "Select Scenario Index", 0, max_idx, 0,
-            key="scen_idx", on_change=load_scenario_callback,
-        )
-        current_idx = st.session_state.get("scen_idx", 0)
-        if 0 <= current_idx < len(df_selected):
-            orig_id = df_selected.iloc[current_idx].name
-            st.info(f"Selected Item {current_idx + 1}/{len(df_selected)} (Orig Row: {orig_id})")
-    else:
-        st.error("results.csv not found.")
-
-    st.markdown("---")
-
     # -- Strategy Selection --
     st.subheader("Strategy Selection")
     all_strategy_labels = {v["label"]: k for k, v in STRATEGY_REGISTRY.items()}
@@ -136,7 +114,6 @@ with st.sidebar:
     # -- Visualization Options --
     st.subheader("Visualization")
     marker_alpha = st.slider("Marker opacity", 0.1, 1.0, 0.55, 0.05)
-    dpi = st.slider("Figure DPI", 50, 1000, 100, step=50)
 
 
 # --- 4. Main Execution Area ---
@@ -173,7 +150,7 @@ with st.spinner("Simulating…"):
             replace=replace
         )
 
-        fig = Figure(figsize=(16, 12), dpi=dpi)
+        fig = Figure(figsize=(16, 12))
         runner.build_figure(
             scenario_data_list, fig,
             subplot_ids=selected_subplot_ids,
@@ -185,7 +162,12 @@ with st.spinner("Simulating…"):
 
         with tab_viz:
             if scenario_data_list:
-                st.pyplot(fig)
+                # 1. Save the figure to a memory buffer as an SVG
+                buf = io.StringIO()
+                fig.savefig(buf, format="svg", bbox_inches='tight')
+                
+                # 2. Display the SVG string directly
+                st.image(buf.getvalue(), use_container_width=True)
             else:
                 st.warning("No plot generated.")
 

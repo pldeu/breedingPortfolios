@@ -1047,7 +1047,7 @@ class ExperimentRunner:
                         gain_val = mv - base_line['mean_variance']
                     else:
                         denom = (best_possible_value - base_line['mean_variance'])
-                        gain_val = (mv - base_line['mean_variance']) / denom if denom != 0 else 0
+                        gain_val = (mv - base_line['mean_variance']) / denom if abs(denom) > 0.0001 else 0
                     gain_val = np.round(gain_val, 4)
                     gains.append(gain_val * 100)
                     if type(res['out_dict']['weights']) == list:
