@@ -114,6 +114,7 @@ with st.sidebar:
     # -- Visualization Options --
     st.subheader("Visualization")
     marker_alpha = st.slider("Marker opacity", 0.1, 1.0, 0.55, 0.05)
+    dpi = st.slider("Figure DPI", 50, 1000, 100, step=50)
 
 
 # --- 4. Main Execution Area ---
@@ -150,7 +151,7 @@ with st.spinner("Simulating…"):
             replace=replace
         )
 
-        fig = Figure(figsize=(16, 12))
+        fig = Figure(figsize=(16, 12), dpi=dpi)
         runner.build_figure(
             scenario_data_list, fig,
             subplot_ids=selected_subplot_ids,
@@ -162,12 +163,15 @@ with st.spinner("Simulating…"):
 
         with tab_viz:
             if scenario_data_list:
-                # 1. Save the figure to a memory buffer as an SVG
-                buf = io.StringIO()
-                fig.savefig(buf, format="svg", bbox_inches='tight')
+                # 1. Use BytesIO for binary formats like PNG
+                buf = io.BytesIO() 
+                fig.savefig(buf, format="png", bbox_inches='tight', dpi=dpi)
                 
-                # 2. Display the SVG string directly
-                st.image(buf.getvalue(), use_container_width=True)
+                # 2. Seek to the start of the buffer so Streamlit can read it
+                buf.seek(0)
+                
+                # 3. Display the image
+                st.image(buf, use_container_width=True)
             else:
                 st.warning("No plot generated.")
 
