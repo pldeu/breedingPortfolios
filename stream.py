@@ -66,7 +66,7 @@ with st.sidebar:
     st.subheader("Current Parameters")
     p = st.slider("Prob (p)", 0.0, 1.0, 0.5, 0.01, key="p_var")
     c = st.slider("Env. con. (c)", 0.0, 1.0, 0.1, 0.01, key="c_var")
-    gamma = st.slider("Gamma", 0.0, 1000.0, 21.0, 1.0, key="gamma_var")
+    gamma = st.slider("Gamma", 0.0, 1000.0, 20.0, 1.0, key="gamma_var")
     rg = st.slider("Gen Corr (r_g)", -1.0, 1.0, -0.7, 0.05, key="rg_var")
     R = st.slider("R", 0.0, 1.0, 0.1, 0.1, key="R_var")
 
@@ -114,7 +114,7 @@ with st.sidebar:
     # -- Visualization Options --
     st.subheader("Visualization")
     marker_alpha = st.slider("Marker opacity", 0.1, 1.0, 0.55, 0.05)
-    dpi = st.slider("Figure DPI", 50, 1000, 100, step=50)
+    dpi = st.slider("Figure DPI", 50, 600, 100, step=50)
 
 
 # --- 4. Main Execution Area ---
