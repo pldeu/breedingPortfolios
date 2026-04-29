@@ -480,9 +480,9 @@ def _render_legend(ax, sd):
     legend_elements = [
         Line2D([0], [0], color='k', linestyle='--', label='Breeding Ellipse'),
         Line2D([0], [0], marker='*', color='w', markerfacecolor='gold', markersize=18,
-               markeredgecolor='k', label='Fixed Anchor'),
+               markeredgecolor='k', label='Fixed Variety'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='gray', markersize=12,
-               label='Original Mutable'),
+               label='Mutable Variety'),
     ]
     for s_name, (p_mk, p_col) in plot_styles.items():
         legend_elements.append(
@@ -561,6 +561,81 @@ def _render_mvp_line(ax, sd):
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
 
+
+def _render_mean_variance(ax, sd, show_legend=True):
+    """
+    Mean-variance scatter for all strategies.
+
+    Background : viridis heatmap of U(var, mean) = mean - gamma/2 * var
+    Lines      : iso-utility lines (same U as each strategy's point)
+    Markers    : one point per strategy
+    """
+    gamma = sd['grid_dict']['gamma']
+    plot_styles = sd['plot_styles']
+    details_per_strategy = sd['details_per_strategy']
+
+    # ------------------------------------------------------------------
+    # 1. Collect strategy points
+    # ------------------------------------------------------------------
+    points = {}
+    for s_name, res in details_per_strategy.items():
+        od = res['out_dict']
+        points[s_name] = (od['variance'], od['mean'])
+
+    all_vars  = [v for v, m in points.values()]
+    all_means = [m for v, m in points.values()]
+
+    var_lo  = max(0.0, min(all_vars)  * 0.6)
+    var_hi  =          max(all_vars)  * 1.4
+    mean_lo = max(0.0, min(all_means) * 0.8)
+    mean_hi =          max(all_means) * 1.2
+
+    n_grid = 300
+    var_grid  = np.linspace(var_lo,  var_hi,  n_grid)
+    mean_grid = np.linspace(mean_lo, mean_hi, n_grid)
+    VAR, MEAN = np.meshgrid(var_grid, mean_grid)
+    U_surface = MEAN - 0.5 * gamma * VAR
+
+    cf = ax.contourf(VAR, MEAN, U_surface, levels=50, cmap='RdBu_r', alpha=0.85)
+    ax.get_figure().colorbar(cf, ax=ax, label=r'Utility  $\mu - \frac{\gamma}{2}\sigma^2$')
+
+    # ------------------------------------------------------------------
+    # 3. Iso-utility lines + strategy markers
+    # ------------------------------------------------------------------
+    var_range = np.linspace(var_lo, var_hi, 300)
+
+    for s_name, (p_mk, p_col) in plot_styles.items():
+        s_var, s_mean = points[s_name]
+        utility  = s_mean - 0.5 * gamma * s_var
+        iso_mean = utility + 0.5 * gamma * var_range
+
+        mask = (iso_mean >= mean_lo * 0.5) & (iso_mean <= mean_hi * 1.5)
+        #ax.plot(var_range[mask], iso_mean[mask],
+        #      color='white', linewidth=1.8, linestyle='--', alpha=0.85,
+        #       zorder=8)
+        # Thin coloured line on top so the strategy colour is still readable
+        ax.plot(var_range[mask], iso_mean[mask],
+                color=p_col, linewidth=0.9, linestyle='--', alpha=0.9,
+                zorder=9)
+
+        ax.scatter(s_var, s_mean,
+                   marker=p_mk, color=p_col, s=140,
+                   linewidths=1.2,
+                   label=f"{s_name}", #  (U={utility:.3f})
+                   zorder=10)
+
+    # ------------------------------------------------------------------
+    # 4. Axes
+    # ------------------------------------------------------------------
+    ax.set_xlabel(r"Portfolio Variance  $\sigma^2$")
+    ax.set_ylabel(r"Portfolio Mean  $\mu$")
+    ax.set_title("Mean–Variance Space")
+    ax.set_xlim([var_lo, var_hi])
+    ax.set_ylim([mean_lo, mean_hi])
+    ax.grid(True, alpha=0.2, color='white')
+
+    #if show_legend:
+    #   ax.legend(fontsize='small', framealpha=0.8)
 
 def _render_appraisal_ratio(ax, sd):
     """
@@ -815,6 +890,8 @@ SUBPLOT_REGISTRY: dict = {
     'appraisal_ratio':          SubplotSpec('appraisal_ratio',          'Appraisal Ratio',                     'heatmap',       _render_appraisal_ratio),
     'selection_indices':          SubplotSpec('selection_indices',          'Selection Indices',                     'heatmap',       _render_selection_indices),
     'complementarity_ratio':          SubplotSpec('complementarity_ratio',          'Complementarity Ratio',                     'heatmap',       _render_complementarity_ratio),
+    'mean-variance':          SubplotSpec('mean_variance',          'Mean-Variance',                     'heatmap',       _render_mean_variance),
+
 }
 
 DEFAULT_SUBPLOT_IDS = [

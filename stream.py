@@ -171,7 +171,7 @@ with st.spinner("Simulating…"):
                 buf.seek(0)
                 
                 # 3. Display the image
-                st.image(buf, use_container_width=True)
+                st.image(buf, width='stretch')
             else:
                 st.warning("No plot generated.")
 
