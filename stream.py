@@ -172,6 +172,15 @@ with st.spinner("Simulating…"):
                 
                 # 3. Display the image
                 st.image(buf, width='stretch')
+
+                with st.sidebar:
+                    st.markdown("---")
+                    st.download_button(
+                        label="Download figure (PNG)",
+                        data=buf.getvalue(),
+                        file_name="breeding_portfolio.png",
+                        mime="image/png",
+                    )
             else:
                 st.warning("No plot generated.")
 
