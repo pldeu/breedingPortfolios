@@ -25,13 +25,13 @@ from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
 STRATEGY_REGISTRY = {
     'Base':         {'label': 'Baseline',                 'group': 'benchmark'},
     'BeatBest':     {'label': 'BeatBest',                 'group': 'primary'},
-    'POB':          {'label': 'POB',                      'group': 'primary'},
+    'PoB':          {'label': 'PoB',                      'group': 'primary'},
     'BeatBestS':    {'label': 'BeatBestS',                'group': 'primary'},
     'MaxMarket':  {'label': 'MaxMarket',             'group': 'primary'},
     'Clairvoyance': {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
-DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'POB', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
+DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'PoB', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
 
 
 # ---------------------------------------------------------------------------
@@ -910,7 +910,7 @@ class ExperimentRunner:
         all_strats = {
             'Base':         self._strat_base,
             'BeatBest':         self._strat_B4M,
-            'POB':          self._strat_B4P,
+            'PoB':          self._strat_B4P,
             'BeatBestS':     self._strat_BB,
             'MaxMarket':        self._strat_max_investability,
             'Adopt3':       self._strat_max_investability3,
