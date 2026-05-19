@@ -23,7 +23,7 @@ class GurobiPortfolioOptimizer:
         self.yf = self._get_yield_vec(self.g_fixed[0], self.g_fixed[1])
         self.ym = self._get_yield_vec(self.g_mutable[0], self.g_mutable[1])
 
-        self.MVP_model = None
+        self.POB_model = None
 
     def _get_yield_vec(self, x, y):
         """Returns array [y_env1, y_env2]"""
@@ -124,7 +124,7 @@ class GurobiPortfolioOptimizer:
         if m.Status == GRB.OPTIMAL:
             g_opt = np.array([gx.X, gy.X])
             w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
-            self.MVP_model = m
+            self.POB_model = m
             return self._build_result(g_opt, w_opt)
         elif m.Status == GRB.TIME_LIMIT:
             print('Struggling with start_B4P or B4M')
@@ -141,11 +141,11 @@ class GurobiPortfolioOptimizer:
         """
 
         # 1. Fallback: If strat_B4P hasn't been run yet, run it from scratch
-        if getattr(self, 'MVP_model', None) is None:
+        if getattr(self, 'POB_model', None) is None:
             self.gamma = gamma
             return self.strat_B4P()
 
-        m = self.MVP_model
+        m = self.POB_model
 
         # 2. Retrieve existing variables by name
         gx = m.getVarByName("gx")

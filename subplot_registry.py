@@ -86,7 +86,7 @@ def _get_overlay_data(sd):
 
 def _compute_analytical_overlay(grid_dict):
     """
-    Compute analytical MVP, BB, BBS points and condition regions
+    Compute analytical POB, BB, BBS points and condition regions
     on the (g_new_1, g_new_2) grid.
     """
     g_f = grid_dict['g_fixed']
@@ -167,7 +167,7 @@ def _compute_analytical_overlay(grid_dict):
     else:
         V_BBS = U_f + P_BBS ** 2 / (2 * A * Q_BBS ** 2)
 
-    # MVP solution
+    # POB solution
     L_tilde = np.sqrt(alpha ** 2 * r_d ** 2 + delta ** 2 * r_s ** 2)
     feasible = L_tilde >= r_s * r_d
 
@@ -197,18 +197,18 @@ def _compute_analytical_overlay(grid_dict):
         V1, w1 = eval_V(theta1)
         V2, w2 = eval_V(theta2)
         if V1 >= V2:
-            theta_MVP, V_MVP_val, w_MVP_val = theta1, V1, w1
+            theta_POB, V_POB_val, w_POB_val = theta1, V1, w1
         else:
-            theta_MVP, V_MVP_val, w_MVP_val = theta2, V2, w2
+            theta_POB, V_POB_val, w_POB_val = theta2, V2, w2
 
-        s_MVP = s_m + r_s * np.cos(theta_MVP)
-        d_MVP = d_m + r_d * np.sin(theta_MVP)
-        g_MVP = np.array([(s_MVP + d_MVP) / 2, (s_MVP - d_MVP) / 2])
+        s_POB = s_m + r_s * np.cos(theta_POB)
+        d_POB = d_m + r_d * np.sin(theta_POB)
+        g_POB = np.array([(s_POB + d_POB) / 2, (s_POB - d_POB) / 2])
     else:
-        theta_MVP = theta_BBS
-        V_MVP_val = V_BBS
-        w_MVP_val = w_BBS_port
-        g_MVP = g_BBS
+        theta_POB = theta_BBS
+        V_POB_val = V_BBS
+        w_POB_val = w_BBS_port
+        g_POB = g_BBS
 
     beats_BB = V_grid > V_BB + 1e-10
     beats_BBS = V_grid > V_BBS + 1e-10
@@ -218,12 +218,12 @@ def _compute_analytical_overlay(grid_dict):
         'V_grid': V_grid, 'w_grid': w_grid, 'U_grid': U_grid,
         'beats_BB': beats_BB, 'beats_BBS': beats_BBS,
         'feasible_mask': feasible_mask,
-        'V_BB': V_BB, 'V_BBS': V_BBS, 'V_MVP': V_MVP_val,
+        'V_BB': V_BB, 'V_BBS': V_BBS, 'V_POB': V_POB_val,
         'U_BB': U_BB, 'U_BBS': U_BBS,
-        'w_BB': w_BB, 'w_MVP': w_MVP_val,
-        'g_BB': g_BB, 'g_BBS': g_BBS, 'g_MVP': g_MVP,
+        'w_BB': w_BB, 'w_POB': w_POB_val,
+        'g_BB': g_BB, 'g_BBS': g_BBS, 'g_POB': g_POB,
         'g_f': g_f, 'g_m': g_m,
-        'theta_BB': 0.0, 'theta_BBS': theta_BBS, 'theta_MVP': theta_MVP,
+        'theta_BB': 0.0, 'theta_BBS': theta_BBS, 'theta_POB': theta_POB,
         'r_s': r_s, 'r_d': r_d, 's_m': s_m, 'd_m': d_m,
     }
 
@@ -406,8 +406,8 @@ def _render_covariance(ax, sd):
     ax.grid(True, alpha=0.3)
 
 
-def _render_mvp_vs_bb(ax, sd):
-    """MVP vs BeatBest condition heatmap (plot 12)."""
+def _render_pob_vs_bb(ax, sd):
+    """POB vs BeatBest condition heatmap (plot 12)."""
     X, Y = sd['X'], sd['Y']
     od = _get_overlay_data(sd)
     diff_BB = od['V_grid'] - od['V_BB']
@@ -425,7 +425,7 @@ def _render_mvp_vs_bb(ax, sd):
         Line2D([0], [0], color='magenta', linestyle=':', linewidth=2),
         Line2D([0], [0], color='orange', linestyle=':', linewidth=2),
     ]
-    labels = ['MVP = BB', r'$w(\mathbf{g}_{\mathrm{new}})=0$',
+    labels = ['POB = BB', r'$w(\mathbf{g}_{\mathrm{new}})=0$',
               r'$w(\mathbf{g}_{\mathrm{new}})=1$']
 
     ax.set_ylabel("Genotype dim 2")
@@ -434,13 +434,13 @@ def _render_mvp_vs_bb(ax, sd):
     ax.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
     ax.get_figure().colorbar(cf_bb, ax=ax).set_label(
         r'$V_{fn}(\mathbf{g}_{\mathrm{new}}) - V_{fn}(\mathbf{g}^{BB})$')
-    ax.set_title('MVP vs BB')
+    ax.set_title('POB vs BB')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
 
 
-def _render_mvp_vs_bbs(ax, sd):
-    """MVP vs BBS condition heatmap (plot 13)."""
+def _render_pob_vs_bbs(ax, sd):
+    """POB vs BBS condition heatmap (plot 13)."""
     X, Y = sd['X'], sd['Y']
     od = _get_overlay_data(sd)
     diff_BBS = od['V_grid'] - od['V_BBS']
@@ -458,7 +458,7 @@ def _render_mvp_vs_bbs(ax, sd):
         Line2D([0], [0], color='magenta', linestyle=':', linewidth=1),
         Line2D([0], [0], color='orange', linestyle=':', linewidth=1),
     ]
-    labels = ['MVP = BBS', r'$w(\mathbf{g}_{\mathrm{new}})=0$',
+    labels = ['POB = BBS', r'$w(\mathbf{g}_{\mathrm{new}})=0$',
               r'$w(\mathbf{g}_{\mathrm{new}})=1$']
 
     ax.set_xlabel("Genotype dim 1")
@@ -466,7 +466,7 @@ def _render_mvp_vs_bbs(ax, sd):
     ax.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
     ax.get_figure().colorbar(cf_bbs, ax=ax).set_label(
         r'$V_{fn}(\mathbf{g}_{\mathrm{new}}) - V_{fn}(\mathbf{g}^{BBS})$')
-    ax.set_title('MVP vs BBS')
+    ax.set_title('POB vs BBS')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
 
@@ -494,10 +494,10 @@ def _render_legend(ax, sd):
               frameon=True, borderpad=0.7)
     ax.set_title("Legend", fontweight='bold')
 
-def _render_mvp_line(ax, sd):
+def _render_pob_line(ax, sd):
     """
-    MVP line and ellipse intersection in (g_new_1, g_new_2) space (plot 14).
-    Shows the MVP line alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1,
+    POB line and ellipse intersection in (g_new_1, g_new_2) space (plot 14).
+    Shows the POB line alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1,
     the breeding ellipse, and the two candidate solutions.
     """
     X, Y = sd['X'], sd['Y']
@@ -520,7 +520,7 @@ def _render_mvp_line(ax, sd):
     cf = ax.contourf(X, Y, od['V_grid'], levels=50, cmap='viridis', alpha=0.7)
     ax.get_figure().colorbar(cf, ax=ax).set_label(r'$V_{fn}(\mathbf{g}_{\mathrm{new}})$')
 
-    # MVP line: alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1
+    # POB line: alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1
     # In (Delta_s, Delta_d) space this is a line.
     # We convert to (g1, g2) by: Delta_s = (g1-g_m1) + (g2-g_m2),
     #                             Delta_d = (g1-g_m1) - (g2-g_m2)
@@ -538,12 +538,12 @@ def _render_mvp_line(ax, sd):
         g2_line = (rhs - coeff_g1 * g1_line) / coeff_g2
         mask = (g2_line >= Y.min()) & (g2_line <= Y.max())
         ax.plot(g1_line[mask], g2_line[mask], 'r-', linewidth=2.5,
-                label='MVP line')
+                label='POB line')
     else:
         # Vertical line
         if abs(coeff_g1) > 1e-12:
             g1_val = rhs / coeff_g1
-            ax.axvline(g1_val, color='r', linewidth=2.5, label='MVP line')
+            ax.axvline(g1_val, color='r', linewidth=2.5, label='POB line')
 
     _add_overlays(ax, sd)
 
@@ -556,7 +556,7 @@ def _render_mvp_line(ax, sd):
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     #ax.legend(loc='best', fontsize='small', framealpha=0.8)
-    ax.set_title('MVP Line: '
+    ax.set_title('POB Line: '
                  r'$\frac{\alpha}{r_s^2}\Delta s + \frac{\delta}{r_d^2}\Delta d = -1$')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
@@ -640,8 +640,8 @@ def _render_mean_variance(ax, sd, show_legend=True):
 def _render_appraisal_ratio(ax, sd):
     """
     Appraisal ratio |P/Q| heatmap over (g_new_1, g_new_2) space (plot 15).
-    Shows the squared information ratio P^2/Q^2 that MVP maximises,
-    with the MVP line and breeding ellipse overlaid.
+    Shows the squared information ratio P^2/Q^2 that POB maximises,
+    with the POB line and breeding ellipse overlaid.
     """
     X, Y = sd['X'], sd['Y']
     od = _get_overlay_data(sd)
@@ -679,7 +679,7 @@ def _render_appraisal_ratio(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax).set_label(r'$(P_1/Q)^2$ (risk-free appraisal ratio$^2$)')
 
 
-    # MVP line
+    # POB line
     coeff_g1 = alpha / r_s ** 2 + delta / r_d ** 2
     coeff_g2 = alpha / r_s ** 2 - delta / r_d ** 2
     rhs = -1 + g_m[0] * coeff_g1 + g_m[1] * coeff_g2
@@ -687,7 +687,7 @@ def _render_appraisal_ratio(ax, sd):
     if abs(coeff_g2) > 1e-12:
         g2_line = (rhs - coeff_g1 * g1_line) / coeff_g2
         mask = (g2_line >= Y.min()) & (g2_line <= Y.max())
-        ax.plot(g1_line[mask], g2_line[mask], 'r-', linewidth=2.5, label='MVP line')
+        ax.plot(g1_line[mask], g2_line[mask], 'r-', linewidth=2.5, label='POB line')
 
     # Q = 0 line (singularity): d_new = d_f => g1 - g2 = d_f
     g1_q0 = np.linspace(X.min(), X.max(), 100)
@@ -702,14 +702,14 @@ def _render_appraisal_ratio(ax, sd):
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     ax.legend(loc='best', fontsize='small', framealpha=0.8)
-    ax.set_title(r'Appraisal ratio $(P_1/Q)^2$: MVP maximises this on the ellipse')
+    ax.set_title(r'Appraisal ratio $(P_1/Q)^2$: POB maximises this on the ellipse')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
 
 
 def _render_selection_indices(ax, sd):
     """
-    Comparison of BB, BBS, and MVP selection index directions (plot 16).
+    Comparison of BB, BBS, and POB selection index directions (plot 16).
     Shows the three index directions as arrows from the mutable parent,
     with iso-index lines for each, overlaid on the portfolio value heatmap.
     """
@@ -739,8 +739,8 @@ def _render_selection_indices(ax, sd):
     a_BB_s, a_BB_d = mu, 0.0
     # BBS (local): a = (mu, -A*d_m)
     a_BBS_s, a_BBS_d = mu, -A * d_m
-    # MVP: a = (alpha/r_s^2, delta/r_d^2)
-    a_MVP_s, a_MVP_d = alpha / r_s ** 2, delta / r_d ** 2
+    # POB: a = (alpha/r_s^2, delta/r_d^2)
+    a_POB_s, a_POB_d = alpha / r_s ** 2, delta / r_d ** 2
 
     def index_direction_g12(a_s, a_d):
         """
@@ -764,7 +764,7 @@ def _render_selection_indices(ax, sd):
     for a_s, a_d, color, name in [
         (a_BB_s, a_BB_d, 'yellow', 'BB index'),
         (a_BBS_s, a_BBS_d, 'lime', 'BBS index'),
-        (a_MVP_s, a_MVP_d, 'red', 'MVP index'),
+        (a_POB_s, a_POB_d, 'red', 'POB index'),
     ]:
         dg1, dg2 = index_direction_g12(a_s, a_d)
         ax.annotate('', xy=(g_m[0] + arrow_scale * dg1, g_m[1] + arrow_scale * dg2),
@@ -784,7 +784,7 @@ def _render_selection_indices(ax, sd):
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     ax.legend(loc='best', fontsize='small', framealpha=0.8)
-    ax.set_title('Selection index directions: BB vs BBS vs MVP')
+    ax.set_title('Selection index directions: BB vs BBS vs POB')
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
 
@@ -836,15 +836,15 @@ def _render_complementarity_ratio(ax, sd):
         verdict = "BB adequate"
         verdict_color = 'green'
     elif comp_ratio <= 1.0:
-        verdict = "MVP recommended"
+        verdict = "POB recommended"
         verdict_color = 'orange'
     else:
-        verdict = "MVP essential"
+        verdict = "POB essential"
         verdict_color = 'red'
 
     textstr = (f"$\\mathcal{{R}} = {comp_ratio:.3f}$\n"
                f"$\\alpha = {alpha:.3f}$, $\\delta = {delta:.3f}$\n"
-               f"$w^{{MVP}} = {od['w_MVP']:.3f}$\n"
+               f"$w^{{POB}} = {od['w_POB']:.3f}$\n"
                f"Verdict: {verdict}")
     props = dict(boxstyle='round', facecolor='white', alpha=0.9,
                  edgecolor=verdict_color, linewidth=2)
@@ -883,10 +883,10 @@ SUBPLOT_REGISTRY: dict = {
     'adoption_share':  SubplotSpec('adoption_share',  'Adoption Shares (w_c)',      'heatmap',     _render_adoption_share),
     'weight_mutable':  SubplotSpec('weight_mutable',  'Weight Mutable',             'heatmap',     _render_weight_mutable),
     'covariance':      SubplotSpec('covariance',      'Covariance (Cand vs Fixed)', 'heatmap',     _render_covariance),
-    'mvp_vs_bb':       SubplotSpec('mvp_vs_bb',       'MVP vs BeatBest',            'diagnostic',  _render_mvp_vs_bb),
-    'mvp_vs_bbs':      SubplotSpec('mvp_vs_bbs',      'MVP vs BBS',                 'diagnostic',  _render_mvp_vs_bbs),
+    'pob_vs_bb':       SubplotSpec('pob_vs_bb',       'POB vs BeatBest',            'diagnostic',  _render_pob_vs_bb),
+    'pob_vs_bbs':      SubplotSpec('pob_vs_bbs',      'POB vs BBS',                 'diagnostic',  _render_pob_vs_bbs),
     'legend':          SubplotSpec('legend',          'Legend',                     'chart',       _render_legend),
-    'mvp_line':          SubplotSpec('mvp_line',          'MVP_line',                     'heatmap',       _render_mvp_line),
+    'pob_line':          SubplotSpec('pob_line',          'POB_line',                     'heatmap',       _render_pob_line),
     'appraisal_ratio':          SubplotSpec('appraisal_ratio',          'Appraisal Ratio',                     'heatmap',       _render_appraisal_ratio),
     'selection_indices':          SubplotSpec('selection_indices',          'Selection Indices',                     'heatmap',       _render_selection_indices),
     'complementarity_ratio':          SubplotSpec('complementarity_ratio',          'Complementarity Ratio',                     'heatmap',       _render_complementarity_ratio),
@@ -895,5 +895,5 @@ SUBPLOT_REGISTRY: dict = {
 }
 
 DEFAULT_SUBPLOT_IDS = [
-    'value_added', 'performance_bar',  'adoption_share','portfolio_mean', 'portfolio_var', 'covariance','mvp_vs_bb', 'mvp_vs_bbs',  'legend',
+    'value_added', 'performance_bar',  'adoption_share','portfolio_mean', 'portfolio_var', 'covariance','pob_vs_bb', 'pob_vs_bbs',  'legend',
 ]

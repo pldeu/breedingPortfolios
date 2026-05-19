@@ -25,13 +25,13 @@ from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
 STRATEGY_REGISTRY = {
     'Base':         {'label': 'Baseline',                 'group': 'benchmark'},
     'BeatBest':     {'label': 'BeatBest',                 'group': 'primary'},
-    'MVP':          {'label': 'MVP',                      'group': 'primary'},
+    'POB':          {'label': 'POB',                      'group': 'primary'},
     'BeatBestS':    {'label': 'BeatBestS',                'group': 'primary'},
     'MaxMarket':  {'label': 'MaxMarket',             'group': 'primary'},
     'Clairvoyance': {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
-DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'MVP', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
+DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'POB', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
 
 
 # ---------------------------------------------------------------------------
@@ -910,7 +910,7 @@ class ExperimentRunner:
         all_strats = {
             'Base':         self._strat_base,
             'BeatBest':         self._strat_B4M,
-            'MVP':          self._strat_B4P,
+            'POB':          self._strat_B4P,
             'BeatBestS':     self._strat_BB,
             'MaxMarket':        self._strat_max_investability,
             'Adopt3':       self._strat_max_investability3,
@@ -1059,48 +1059,74 @@ class ExperimentRunner:
                     strat_names.append(name)
                     plot_styles[name] = (next(mk_iter), next(col_iter))
 
-                # Text report
+                # --- Pretty text report ---
+                NAME_W = 22
+                NUM_W = 8
+                SEP = " │ "
+
                 def fmt_w(w_list):
-                    return ", ".join([f"{x:.2f}" for x in w_list])
+                    return ", ".join(f"{x:.2f}" for x in w_list)
 
-                header = (f"{'Strategy':<25} |  {'MV':<8} | {'Gain':<8} |"
-                          f"{'Mean':<8} | {'Var':<8} | {'Weights (Env1 / Env2)'}")
-                print(header)
-                print("-" * 115)
+                def fmt_weights(weights):
+                    if isinstance(weights, dict):
+                        w_e1, w_e2 = weights['env_1'], weights['env_2']
+                        if w_e1 == w_e2:
+                            return f"[{fmt_w(w_e1)}]"
+                        return f"E1:[{fmt_w(w_e1)}]  E2:[{fmt_w(w_e2)}]"
+                    return f"[{fmt_w(weights)}]"
 
-                if type(base_line['weights']) == dict:
-                    w_e1 = base_line['weights']['env_1']
-                    w_e2 = base_line['weights']['env_2']
-                    w_str = f"[{fmt_w(w_e1)}]" if w_e1 == w_e2 else f"E1:[{fmt_w(w_e1)}] E2:[{fmt_w(w_e2)}]"
-                else:
-                    w_str = str([round(i, 2) for i in base_line['weights']])
-                print(f"{'Baseline':<25} | {base_line['mean_variance']:<8.4f} | {0:<8.4f} | "
-                      f"{base_line['mean']:<8.4f} | {base_line['variance']:<8.4f} | {w_str}")
+                def make_row(name, nums, extra=""):
+                    num_part = SEP.join(f"{v:>{NUM_W}.4f}" for v in nums)
+                    line = f"{name:<{NAME_W}}{SEP}{num_part}"
+                    if extra:
+                        line += f"{SEP}{extra}"
+                    return line
+
+                def make_header(name_label, num_labels, extra_label=""):
+                    num_part = SEP.join(f"{h:>{NUM_W}}" for h in num_labels)
+                    line = f"{name_label:<{NAME_W}}{SEP}{num_part}"
+                    if extra_label:
+                        line += f"{SEP}{extra_label}"
+                    return line
+
+                # --- Table 1: Strategy comparison ---
+                header1 = make_header("Strategy", ["MV", "Gain", "Mean", "Var"],
+                                    "Weights (Env1 / Env2)")
+                print(header1)
+                print("─" * len(header1))
+
+                print(make_row(
+                    "Baseline",
+                    [base_line['mean_variance'], 0.0, base_line['mean'], base_line['variance']],
+                    fmt_weights(base_line['weights']),
+                ))
 
                 for name, res in details_per_strategy.items():
                     s = res['stats']
-                    d = res['out_dict']
-                    if type(d['weights']) == dict:
-                        w_e1 = d['weights']['env_1']
-                        w_e2 = d['weights']['env_2']
-                        w_str = f"[{fmt_w(w_e1)}]" if w_e1 == w_e2 else f"E1:[{fmt_w(w_e1)}] E2:[{fmt_w(w_e2)}]"
-                    else:
-                        w_str = str([round(i, 2) for i in d['weights']])
-                    print(f"{name:<25} | {s['mean_variance']:<8.4f} | {s['gain']:<8.4f} | "
-                          f"{s['mean']:<8.4f} | {s['variance']:<8.4f} | {w_str}")
+                    print(make_row(
+                        name,
+                        [s['mean_variance'], s['gain'], s['mean'], s['variance']],
+                        fmt_weights(res['out_dict']['weights']),
+                    ))
 
-                print("-" * 115)
-                print(f"{'Single Component':<25} | {'MV':<8} | {'Gain':<8} |{'Mean':<8}  | "
-                      f"{'Var':<8} | {'g1':<8} | {'g2':<8} | {'y1':<8} | {'y2':<8}  ")
+                print()
+
+                # --- Table 2: Single component ---
+                header2 = make_header(
+                    "Single Component",
+                    ["MV", "Gain", "Mean", "Var", "g1", "g2", "y1", "y2"],
+                )
+                sep2 = "─" * len(header2)
+                print(header2)
+                print(sep2)
 
                 def print_pure_row(row_name, g_vec, ref_mv):
                     g = np.array(g_vec)
                     mu, var, mv, _, _ = self._get_yields_and_stats(g[0], g[1])
                     gain = mv - ref_mv
-                    print(f"{row_name:<25} | {mv:<8.4f} | {gain:<8.4f} | {mu:<8.4f} | {var:<8.4f} | "
-                          f"{g[0]:<8.4f} | {g[1]:<8.4f}| "
-                          f"{(self.p * (g[0] + self.c * g[1])):<8.4f} | "
-                          f"{((1 - self.p) * (self.c * g[0] + g[1])):<8.4f} ")
+                    y1 = self.p * (g[0] + self.c * g[1])
+                    y2 = (1 - self.p) * (self.c * g[0] + g[1])
+                    print(make_row(row_name, [mv, gain, mu, var, g[0], g[1], y1, y2]))
 
                 print_pure_row("Fixed Asset (Base)", g_fixed, base_line['mean_variance'])
                 print_pure_row("Mutable Asset", g_mutable, base_line['mean_variance'])
@@ -1108,9 +1134,10 @@ class ExperimentRunner:
                     gens = res['out_dict']['genotypes']
                     for i, g in enumerate(gens):
                         if i > 1 or ((g[0] != g_fixed[0] or g[1] != g_fixed[1]) and
-                                     (g[0] != g_mutable[0] and g[1] != g_mutable[1])):
+                                    (g[0] != g_mutable[0] and g[1] != g_mutable[1])):
                             print_pure_row(f"Bred ({name})", g, base_line['mean_variance'])
-                print("-" * 115)
+
+                print(sep2)
 
                 scenario_data_list.append({
                     'grid_dict': grid_dict,
