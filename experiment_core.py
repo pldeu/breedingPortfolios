@@ -1093,11 +1093,19 @@ class ExperimentRunner:
                         line += f"{SEP}{extra_label:<{EXTRA_W}}"
                     return line
 
+                def make_separator(num_labels, has_extra=False):
+                    sep_char = "─"
+                    num_part = SEP.join(sep_char * NUM_W for _ in num_labels)
+                    line = sep_char * NAME_W + SEP + num_part
+                    if has_extra:
+                        line += SEP + sep_char * EXTRA_W
+                    return line
+
                 # --- Table 1: Strategy comparison ---
                 header1 = make_header("Strategy", ["MV", "Gain", "Mean", "Var"],
                                     "Weights (Env1 / Env2)")
                 print(header1)
-                print("─" * len(header1))
+                print(make_separator(["MV", "Gain", "Mean", "Var"], has_extra=True))
 
                 print(make_row(
                     "Baseline",
@@ -1120,7 +1128,7 @@ class ExperimentRunner:
                     "Single Component",
                     ["MV", "Gain", "Mean", "Var", "g1", "g2", "y1", "y2"],
                 )
-                sep2 = "─" * len(header2)
+                sep2 = make_separator(["MV", "Gain", "Mean", "Var", "g1", "g2", "y1", "y2"], has_extra=False)
                 print(header2)
                 print(sep2)
 
