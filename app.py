@@ -108,7 +108,7 @@ class BreedingExperimentApp:
         add_slider("Env. con. (c)", "c_var", 0.0, 1.0, 0.01, 0.1)
         add_slider("Gamma", "gamma_var", 0.0, 1000.0, 1.0, 21.0)
         add_slider("Gen Corr (r_g)", "rg_var", -1.0, 1.0, 0.05, -0.7)
-        add_slider("R", "R_var", 0.0, 1.0, 0.1, 0.1)
+        add_slider("R", "R_var", 0.0, 1.0, 0.05, 0.1)
         
         ttk.Separator(self.sidebar, orient='horizontal').grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
         row += 1

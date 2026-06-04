@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize, TwoSlopeNorm
 from matplotlib.lines import Line2D
 import matplotlib.ticker as ticker
+from scipy.interpolate import griddata
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +69,12 @@ def _add_overlays(ax, sd, show_legend=False):
             is_diff_mut = (g_cand_plot[0] != g_mutable[0] or g_cand_plot[1] != g_mutable[1])
             is_diff_fix = (g_cand_plot[0] != g_fixed[0] or g_cand_plot[1] != g_fixed[1])
             if i > 1 or (is_diff_mut and is_diff_fix):
-                ax.scatter(g_cand_plot[0], g_cand_plot[1], marker=p_mk, color=p_col,
-                           s=120, label=s_name, zorder=11, alpha=marker_alpha)
+                if s_name == "PoB":
+                    ax.scatter(g_cand_plot[0], g_cand_plot[1], marker=p_mk, color=p_col,
+                            s=120, label="PoB", zorder=11, alpha=marker_alpha)
+                else:
+                    ax.scatter(g_cand_plot[0], g_cand_plot[1], marker=p_mk, color=p_col,
+                            s=120, label=s_name, zorder=11, alpha=marker_alpha)
 
     if show_legend:
         loc = 'left' if g_fixed[0] else 'right'
@@ -254,8 +259,7 @@ def _render_performance_bar(ax, sd):
     """Dual-axis bar chart: economic gain vs adoption rate (plot 1)."""
     strat_names = sd['strat_names']
     gains = sd['gains']
-    adaptions1 = sd['adaptions1']
-    adaptions2 = sd['adaptions2']
+    adaptions = sd['weighted_adaptions']
     plot_styles = sd['plot_styles']
     bar_colors = [plot_styles[n][1] for n in strat_names]
 
@@ -270,9 +274,7 @@ def _render_performance_bar(ax, sd):
                     fontsize=8, fontweight='bold')
 
     ax2 = ax.twinx()
-    ax2.plot(strat_names, adaptions2, color='darkblue', marker='D', linestyle='None',
-             markersize=8, label='Adaptation Rate (Env2)')
-    ax2.plot(strat_names, adaptions1, color='darkred', marker='D', linestyle='None',
+    ax2.plot(strat_names, adaptions, color='darkred', marker='D', linestyle='None',
              markersize=8, label='Adaptation Rate (Env1)')
     ax2.set_ylabel("Adaptation Rate (Share)", color='darkred')
     ax2.set_ylim(0, 1.05)
@@ -406,7 +408,7 @@ def _render_covariance(ax, sd):
     ax.grid(True, alpha=0.3)
 
 
-def _render_pob_vs_bb(ax, sd):
+def _render_PoB_vs_bb(ax, sd):
     """PoB vs BeatBest condition heatmap (plot 12)."""
     X, Y = sd['X'], sd['Y']
     od = _get_overlay_data(sd)
@@ -439,7 +441,7 @@ def _render_pob_vs_bb(ax, sd):
     ax.set_ylim([0, 1])
 
 
-def _render_pob_vs_bbs(ax, sd):
+def _render_PoB_vs_bbs(ax, sd):
     """PoB vs BBS condition heatmap (plot 13)."""
     X, Y = sd['X'], sd['Y']
     od = _get_overlay_data(sd)
@@ -478,11 +480,11 @@ def _render_legend(ax, sd):
     ax.axis('off')
 
     legend_elements = [
-        Line2D([0], [0], color='k', linestyle='--', label='Breeding Ellipse'),
+        Line2D([0], [0], color='k', linestyle='--', label='Breeding ellipse'),
         Line2D([0], [0], marker='*', color='w', markerfacecolor='gold', markersize=18,
-               markeredgecolor='k', label='Fixed Variety'),
+               markeredgecolor='k', label='Fixed variety'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='gray', markersize=12,
-               label='Mutable Variety'),
+               label='Mutable variety'),
     ]
     for s_name, (p_mk, p_col) in plot_styles.items():
         legend_elements.append(
@@ -494,7 +496,7 @@ def _render_legend(ax, sd):
               frameon=True, borderpad=0.7)
     ax.set_title("Legend", fontweight='bold')
 
-def _render_pob_line(ax, sd):
+def _render_PoB_line(ax, sd):
     """
     PoB line and ellipse intersection in (g_new_1, g_new_2) space (plot 14).
     Shows the PoB line alpha/r_s^2 * Delta_s + delta/r_d^2 * Delta_d = -1,
@@ -789,6 +791,91 @@ def _render_selection_indices(ax, sd):
     ax.set_ylim([0, 1])
 
 
+def _render_yield_ev1_vs_ev2(ax, sd):
+    """
+    Yield in EV1 vs EV2 contour plot, colored by portfolio value added.
+    Each genotype (g1, g2) is mapped to (yield_ev1, yield_ev2) space and colored by v_port.
+    """
+    X, Y = sd['X'], sd['Y']
+    beta1 = sd['beta1']
+    beta2 = sd['beta2']
+    p = sd['p']
+    mv_grid = sd['grid_dict']['stats']['v_port']
+
+    # Compute yields for all grid points
+    z_ev1 = p * (beta1[0] * X + beta1[1] * Y)
+    z_ev2 = (1 - p) * (beta2[0] * X + beta2[1] * Y)
+
+    # Flatten grids to create point cloud
+    z_ev1_flat = z_ev1.flatten()
+    z_ev2_flat = z_ev2.flatten()
+    mv_flat = mv_grid.flatten()
+
+    # Create regular grid in yield space for contours
+    z_ev1_min, z_ev1_max = np.min(z_ev1_flat), np.max(z_ev1_flat)
+    z_ev2_min, z_ev2_max = np.min(z_ev2_flat), np.max(z_ev2_flat)
+
+    grid_ev1 = np.linspace(z_ev1_min, z_ev1_max, 100)
+    grid_ev2 = np.linspace(z_ev2_min, z_ev2_max, 100)
+    Z_EV1, Z_EV2 = np.meshgrid(grid_ev1, grid_ev2)
+
+    # Interpolate portfolio value onto regular grid
+    points = np.column_stack([z_ev1_flat, z_ev2_flat])
+    mv_interp = griddata(points, mv_flat, (Z_EV1, Z_EV2), method='cubic')
+
+    # Create contour plot like _render_value_added
+    levels = np.linspace(np.nanmin(mv_interp), np.nanmax(mv_interp), 50)
+    cf = ax.contourf(Z_EV1, Z_EV2, mv_interp, levels=levels, cmap='RdBu', alpha=0.8)
+    cb = ax.get_figure().colorbar(cf, ax=ax)
+    cb.set_label('ΔV (Gain over Baseline)')
+    cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+    ax.contour(Z_EV1, Z_EV2, mv_interp, levels=[0], colors='k', linewidths=1, linestyles='--')
+
+    # Transform breeding ellipse from genotype space to yield space
+    ellipse_pts = sd['ellipse_pts']
+    ellipse_z_ev1 = p * (beta1[0] * ellipse_pts[:, 0] + beta1[1] * ellipse_pts[:, 1])
+    ellipse_z_ev2 = (1 - p) * (beta2[0] * ellipse_pts[:, 0] + beta2[1] * ellipse_pts[:, 1])
+    ax.plot(ellipse_z_ev1, ellipse_z_ev2, 'k--', label='Breeding Ellipse', linewidth=1.5)
+
+    # Mark strategy solutions in yield space
+    marker_alpha = sd.get('marker_alpha', 0.55)
+    plot_styles = sd['plot_styles']
+    details_per_strategy = sd['details_per_strategy']
+    g_fixed = sd['g_fixed']
+    g_mutable = sd['g_mutable']
+
+    # Fixed anchor
+    z_ev1_fixed = p * (beta1[0] * g_fixed[0] + beta1[1] * g_fixed[1])
+    z_ev2_fixed = (1 - p) * (beta2[0] * g_fixed[0] + beta2[1] * g_fixed[1])
+    ax.scatter(z_ev1_fixed, z_ev2_fixed, c='gold', marker='*', s=300,
+               edgecolors='k', label='Fixed Anchor', zorder=10)
+
+    # Original mutable
+    z_ev1_mutable = p * (beta1[0] * g_mutable[0] + beta1[1] * g_mutable[1])
+    z_ev2_mutable = (1 - p) * (beta2[0] * g_mutable[0] + beta2[1] * g_mutable[1])
+    ax.scatter(z_ev1_mutable, z_ev2_mutable, c='gray', marker='o', s=100,
+               label='Original Mutable', zorder=9)
+
+    # Strategy markers
+    for s_name, (p_mk, p_col) in plot_styles.items():
+        res = details_per_strategy[s_name]
+        genotypes = res['out_dict']['genotypes']
+        for i, g_cand_plot in enumerate(genotypes):
+            is_diff_mut = (g_cand_plot[0] != g_mutable[0] or g_cand_plot[1] != g_mutable[1])
+            is_diff_fix = (g_cand_plot[0] != g_fixed[0] or g_cand_plot[1] != g_fixed[1])
+            if i > 1 or (is_diff_mut and is_diff_fix):
+                z_ev1_cand = p * (beta1[0] * g_cand_plot[0] + beta1[1] * g_cand_plot[1])
+                z_ev2_cand = (1 - p) * (beta2[0] * g_cand_plot[0] + beta2[1] * g_cand_plot[1])
+                ax.scatter(z_ev1_cand, z_ev2_cand, marker=p_mk, color=p_col,
+                          s=120, label=s_name, zorder=11, alpha=marker_alpha)
+
+    ax.set_xlabel("Yield EV1 (Environment 1)")
+    ax.set_ylabel("Yield EV2 (Environment 2)")
+    ax.set_title("Yield in EV1 vs EV2")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([0, 0.5])
+    ax.set_ylim([0, 0.5])
+
 def _render_complementarity_ratio(ax, sd):
     """
     Complementarity ratio R = |delta|*r_s / (|alpha+r_s|*r_d) diagnostic (plot 17).
@@ -880,13 +967,14 @@ SUBPLOT_REGISTRY: dict = {
     'variety_var':     SubplotSpec('variety_var',     'Single Variety Variance',    'heatmap',     _render_variety_var),
     'yield_ev1':       SubplotSpec('yield_ev1',       'Yield EV1',                  'heatmap',     _render_yield_ev1),
     'yield_ev2':       SubplotSpec('yield_ev2',       'Yield EV2',                  'heatmap',     _render_yield_ev2),
+    'yield_ev1_vs_ev2': SubplotSpec('yield_ev1_vs_ev2', 'Yield EV1 vs EV2',        'chart',       _render_yield_ev1_vs_ev2),
     'adoption_share':  SubplotSpec('adoption_share',  'Adoption Shares (w_c)',      'heatmap',     _render_adoption_share),
     'weight_mutable':  SubplotSpec('weight_mutable',  'Weight Mutable',             'heatmap',     _render_weight_mutable),
     'covariance':      SubplotSpec('covariance',      'Covariance (Cand vs Fixed)', 'heatmap',     _render_covariance),
-    'pob_vs_bb':       SubplotSpec('pob_vs_bb',       'PoB vs BeatBest',            'diagnostic',  _render_pob_vs_bb),
-    'pob_vs_bbs':      SubplotSpec('pob_vs_bbs',      'PoB vs BBS',                 'diagnostic',  _render_pob_vs_bbs),
+    'PoB_vs_bb':       SubplotSpec('PoB_vs_bb',       'PoB vs BeatBest',            'diagnostic',  _render_PoB_vs_bb),
+    'PoB_vs_bbs':      SubplotSpec('PoB_vs_bbs',      'PoB vs BBS',                 'diagnostic',  _render_PoB_vs_bbs),
     'legend':          SubplotSpec('legend',          'Legend',                     'chart',       _render_legend),
-    'pob_line':          SubplotSpec('pob_line',          'PoB_line',                     'heatmap',       _render_pob_line),
+    'PoB_line':          SubplotSpec('PoB_line',          'PoB_line',                     'heatmap',       _render_PoB_line),
     'appraisal_ratio':          SubplotSpec('appraisal_ratio',          'Appraisal Ratio',                     'heatmap',       _render_appraisal_ratio),
     'selection_indices':          SubplotSpec('selection_indices',          'Selection Indices',                     'heatmap',       _render_selection_indices),
     'complementarity_ratio':          SubplotSpec('complementarity_ratio',          'Complementarity Ratio',                     'heatmap',       _render_complementarity_ratio),
@@ -895,5 +983,5 @@ SUBPLOT_REGISTRY: dict = {
 }
 
 DEFAULT_SUBPLOT_IDS = [
-    'value_added', 'performance_bar',  'adoption_share','portfolio_mean', 'portfolio_var', 'covariance','pob_vs_bb', 'pob_vs_bbs',  'legend',
+    'value_added', 'performance_bar',  'adoption_share','portfolio_mean', 'portfolio_var', 'covariance','PoB_vs_bb', 'PoB_vs_bbs',  'legend',
 ]

@@ -28,9 +28,9 @@ df_results = pd.read_csv('results_jacob_circle.csv')
 
 df_results['w'] = df_results.Weights.astype(str)
 
-df_results['Criterion1'] = df_results['PoB-BeatBest']
-df_results['Criterion2'] = df_results['PoB-Mean']
-df_results['Criterion3'] = df_results['PoB-Adopt']
+df_results['Criterion1'] = df_results['POB-BeatBest']
+df_results['Criterion2'] = df_results['POB-Mean']
+df_results['Criterion3'] = df_results['POB-Adopt']
 
 # 3) select diverse scenarios
 selected = sweep.select_diverse_scenarios(df_results, k=5, method='greedy')

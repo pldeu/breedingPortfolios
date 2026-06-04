@@ -50,11 +50,11 @@ class ExperimentRunner:
         self.G = np.array([[1.0, r_g], [r_g, 1.0]])
         self.eps = 1e-12
         self.Ginv = np.linalg.inv(self.G + self.eps * np.eye(2))
-        self.lim = 1.0
+        self.lim = 1.2
         self.n = n
         self.scenario_pairs = scenario_pairs
-        self.x = np.linspace(0, self.lim, self.n)
-        self.y = np.linspace(0, self.lim, self.n)
+        self.x = np.linspace(-1, self.lim, self.n)
+        self.y = np.linspace(-1, self.lim, self.n)
         self.X, self.Y = np.meshgrid(self.x, self.y)
         self.replace = replace
         self.grid_dict = None
@@ -1034,6 +1034,7 @@ class ExperimentRunner:
                 gains = []
                 adaptions1 = []
                 adaptions2 = []
+                weighted_adaptions = []
                 plot_styles = {}
 
                 mk_iter = cycle(marker_cycle)
@@ -1053,15 +1054,18 @@ class ExperimentRunner:
                     if type(res['out_dict']['weights']) == list:
                         adaptions1.append(res['out_dict']['weights'][-1])
                         adaptions2.append(res['out_dict']['weights'][-1])
+                        weighted_adaptions.append(res['out_dict']['weights'][-1])
                     else:
                         adaptions1.append(res['out_dict']['weights']['env_1'][-1])
                         adaptions2.append(res['out_dict']['weights']['env_2'][-1])
+                        weighted_adaptions.append(self.p * res['out_dict']['weights']['env_1'][-1] + (1-self.p) * res['out_dict']['weights']['env_2'][-1])
                     strat_names.append(name)
                     plot_styles[name] = (next(mk_iter), next(col_iter))
 
                 # --- Pretty text report ---
                 NAME_W = 22
                 NUM_W = 8
+                EXTRA_W = 45
                 SEP = " │ "
 
                 def fmt_w(w_list):
@@ -1079,14 +1083,14 @@ class ExperimentRunner:
                     num_part = SEP.join(f"{v:>{NUM_W}.4f}" for v in nums)
                     line = f"{name:<{NAME_W}}{SEP}{num_part}"
                     if extra:
-                        line += f"{SEP}{extra}"
+                        line += f"{SEP}{extra:<{EXTRA_W}}"
                     return line
 
                 def make_header(name_label, num_labels, extra_label=""):
                     num_part = SEP.join(f"{h:>{NUM_W}}" for h in num_labels)
                     line = f"{name_label:<{NAME_W}}{SEP}{num_part}"
                     if extra_label:
-                        line += f"{SEP}{extra_label}"
+                        line += f"{SEP}{extra_label:<{EXTRA_W}}"
                     return line
 
                 # --- Table 1: Strategy comparison ---
@@ -1146,6 +1150,7 @@ class ExperimentRunner:
                     'gains': gains,
                     'adaptions1': adaptions1,
                     'adaptions2': adaptions2,
+                    'weighted_adaptions' : weighted_adaptions,
                     'plot_styles': plot_styles,
                     'ellipse_pts': ellipse_pts,
                     'g_fixed': g_fixed,
