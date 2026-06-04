@@ -1094,12 +1094,11 @@ class ExperimentRunner:
                     return line
 
                 def make_separator(num_labels, has_extra=False):
-                    sep_char = "─"
-                    num_part = SEP.join(sep_char * NUM_W for _ in num_labels)
-                    line = sep_char * NAME_W + SEP + num_part
+                    num_cols = len(num_labels)
+                    total_width = NAME_W + len(SEP) * num_cols + NUM_W * num_cols
                     if has_extra:
-                        line += SEP + sep_char * EXTRA_W
-                    return line
+                        total_width += len(SEP) + EXTRA_W
+                    return "─" * total_width
 
                 # --- Table 1: Strategy comparison ---
                 header1 = make_header("Strategy", ["MV", "Gain", "Mean", "Var"],
