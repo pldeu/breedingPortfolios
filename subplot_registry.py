@@ -240,13 +240,13 @@ def _compute_analytical_overlay(grid_dict):
 def _render_value_added(ax, sd):
     """Portfolio Value Added heatmap (plot 0)."""
     X, Y = sd['X'], sd['Y']
-    mv_grid = sd['grid_dict']['stats']['v_port']
+    mv_grid = abs(sd['grid_dict']['stats']['v_port'] - sd['base_line']['mean_variance'])
     levels = np.linspace(np.min(mv_grid), np.max(mv_grid), 50)
     cf = ax.contourf(X, Y, mv_grid, levels=levels, cmap='RdBu', alpha=0.8)
     cb = ax.get_figure().colorbar(cf, ax=ax)
     cb.set_label('ΔV (Gain over Baseline)')
     cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-    ax.contour(X, Y, mv_grid, levels=[0], colors='k', linewidths=1, linestyles='--')
+    #ax.contour(X, Y, mv_grid, levels=[0], colors='k', linewidths=1, linestyles='--')
     _add_overlays(ax, sd)
     ax.set_title("Portfolio Value Added")
     ax.set_ylabel("Genotype dim 2")
@@ -809,7 +809,7 @@ def _render_yield_ev1_vs_ev2(ax, sd):
     # Flatten grids to create point cloud
     z_ev1_flat = z_ev1.flatten()
     z_ev2_flat = z_ev2.flatten()
-    mv_flat = mv_grid.flatten()
+    mv_flat = mv_grid.flatten() - sd['base_line']['mean_variance']
 
     # Create regular grid in yield space for contours
     z_ev1_min, z_ev1_max = np.min(z_ev1_flat), np.max(z_ev1_flat)
@@ -822,14 +822,16 @@ def _render_yield_ev1_vs_ev2(ax, sd):
     # Interpolate portfolio value onto regular grid
     points = np.column_stack([z_ev1_flat, z_ev2_flat])
     mv_interp = griddata(points, mv_flat, (Z_EV1, Z_EV2), method='cubic')
+    mv_interp = np.where(np.isnan(mv_interp), 0.0, mv_interp)
+    mv_interp = np.clip(mv_interp, 0.0, None)
 
     # Create contour plot like _render_value_added
-    levels = np.linspace(np.nanmin(mv_interp), np.nanmax(mv_interp), 50)
+    levels = np.linspace(0.0, np.nanmax(mv_interp), 50)
     cf = ax.contourf(Z_EV1, Z_EV2, mv_interp, levels=levels, cmap='RdBu', alpha=0.8)
     cb = ax.get_figure().colorbar(cf, ax=ax)
     cb.set_label('ΔV (Gain over Baseline)')
     cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-    ax.contour(Z_EV1, Z_EV2, mv_interp, levels=[0], colors='k', linewidths=1, linestyles='--')
+    #ax.contour(Z_EV1, Z_EV2, mv_interp, levels=[0], colors='k', linewidths=1, linestyles='--')
 
     # Transform breeding ellipse from genotype space to yield space
     ellipse_pts = sd['ellipse_pts']
