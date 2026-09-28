@@ -151,7 +151,12 @@ with st.spinner("Simulating…"):
             replace=replace
         )
 
-        fig = Figure(figsize=(16, 12), dpi=dpi)
+        # Adjust figure size based on number of subplots
+        n = len(selected_subplot_ids)
+        if n == 3:
+            fig = Figure(figsize=(18, 5.5), dpi=dpi)
+        else:
+            fig = Figure(figsize=(16, 12), dpi=dpi)
         runner.build_figure(
             scenario_data_list, fig,
             subplot_ids=selected_subplot_ids,

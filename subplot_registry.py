@@ -249,6 +249,7 @@ def _render_value_added(ax, sd):
     #ax.contour(X, Y, mv_grid, levels=[0], colors='k', linewidths=1, linestyles='--')
     _add_overlays(ax, sd)
     ax.set_title("Portfolio Value Added")
+    ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
@@ -264,6 +265,7 @@ def _render_performance_bar(ax, sd):
     bar_colors = [plot_styles[n][1] for n in strat_names]
 
     ax.bar(strat_names, gains, edgecolor='k', alpha=0.6, color=bar_colors, label='Economic Gain')
+    ax.set_xlabel("Strategy")
     ax.set_ylabel("Gain % (Normalized)")
     ax.axhline(0, color='k', linewidth=0.8)
     ax.set_ylim(0, 1.05 * 100)
@@ -290,6 +292,8 @@ def _render_portfolio_mean(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Mean Yield')
     _add_overlays(ax, sd)
     ax.set_title("Portfolio Mean")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -302,6 +306,8 @@ def _render_portfolio_var(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Variance')
     _add_overlays(ax, sd)
     ax.set_title("Portfolio Variance")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -314,6 +320,7 @@ def _render_variety_mean(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Mean Yield')
     _add_overlays(ax, sd)
     ax.set_title("Single Variety Mean")
+    ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
@@ -327,6 +334,8 @@ def _render_variety_var(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Variance')
     _add_overlays(ax, sd)
     ax.set_title("Single Variety Variance")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -342,6 +351,8 @@ def _render_yield_ev1(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Yield EV1')
     _add_overlays(ax, sd)
     ax.set_title("Single Variety Yield EV1")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -357,6 +368,8 @@ def _render_yield_ev2(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Yield EV2')
     _add_overlays(ax, sd)
     ax.set_title("Single Variety Yield EV2")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -369,6 +382,7 @@ def _render_adoption_share(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Adoption Rate')
     _add_overlays(ax, sd)
     ax.set_title("Possible adoption shares")
+    ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
@@ -382,6 +396,8 @@ def _render_weight_mutable(ax, sd):
     ax.get_figure().colorbar(cf, ax=ax, label='Weight mutable')
     _add_overlays(ax, sd)
     ax.set_title("Possible adoption shares g_mut")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -403,6 +419,8 @@ def _render_covariance(ax, sd):
     ax.contour(X, Y, Cov_grid, levels=[0], colors='k', linewidths=1, linestyles='--')
     _add_overlays(ax, sd)
     ax.set_title("Covariance (Cand vs Fixed)")
+    ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     ax.set_xlim([0, 1])
     ax.set_ylim([0, 1])
     ax.grid(True, alpha=0.3)
@@ -430,8 +448,8 @@ def _render_PoB_vs_bb(ax, sd):
     labels = ['PoB = BB', r'$w(\mathbf{g}_{\mathrm{new}})=0$',
               r'$w(\mathbf{g}_{\mathrm{new}})=1$']
 
-    ax.set_ylabel("Genotype dim 2")
     ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     _add_overlays(ax, sd, show_legend=False)
     ax.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
     ax.get_figure().colorbar(cf_bb, ax=ax).set_label(
@@ -464,6 +482,7 @@ def _render_PoB_vs_bbs(ax, sd):
               r'$w(\mathbf{g}_{\mathrm{new}})=1$']
 
     ax.set_xlabel("Genotype dim 1")
+    ax.set_ylabel("Genotype dim 2")
     _add_overlays(ax, sd, show_legend=False)
     ax.legend(handles, labels, loc='best', fontsize='small', framealpha=0.8)
     ax.get_figure().colorbar(cf_bbs, ax=ax).set_label(
@@ -557,7 +576,7 @@ def _render_PoB_line(ax, sd):
 
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
-    #ax.legend(loc='best', fontsize='small', framealpha=0.8)
+    ax.grid(True, alpha=0.3)
     ax.set_title('PoB Line: '
                  r'$\frac{\alpha}{r_s^2}\Delta s + \frac{\delta}{r_d^2}\Delta d = -1$')
     ax.set_xlim([0, 1])
@@ -612,10 +631,6 @@ def _render_mean_variance(ax, sd, show_legend=True):
         iso_mean = utility + 0.5 * gamma * var_range
 
         mask = (iso_mean >= mean_lo * 0.5) & (iso_mean <= mean_hi * 1.5)
-        #ax.plot(var_range[mask], iso_mean[mask],
-        #      color='white', linewidth=1.8, linestyle='--', alpha=0.85,
-        #       zorder=8)
-        # Thin coloured line on top so the strategy colour is still readable
         ax.plot(var_range[mask], iso_mean[mask],
                 color=p_col, linewidth=0.9, linestyle='--', alpha=0.9,
                 zorder=9)
@@ -623,7 +638,7 @@ def _render_mean_variance(ax, sd, show_legend=True):
         ax.scatter(s_var, s_mean,
                    marker=p_mk, color=p_col, s=140,
                    linewidths=1.2,
-                   label=f"{s_name}", #  (U={utility:.3f})
+                   label=f"{s_name}",
                    zorder=10)
 
     # ------------------------------------------------------------------
@@ -635,9 +650,6 @@ def _render_mean_variance(ax, sd, show_legend=True):
     ax.set_xlim([var_lo, var_hi])
     ax.set_ylim([mean_lo, mean_hi])
     ax.grid(True, alpha=0.2, color='white')
-
-    #if show_legend:
-    #   ax.legend(fontsize='small', framealpha=0.8)
 
 def _render_appraisal_ratio(ax, sd):
     """
@@ -703,6 +715,7 @@ def _render_appraisal_ratio(ax, sd):
 
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
+    ax.grid(True, alpha=0.3)
     ax.legend(loc='best', fontsize='small', framealpha=0.8)
     ax.set_title(r'Appraisal ratio $(P_1/Q)^2$: PoB maximises this on the ellipse')
     ax.set_xlim([0, 1])
@@ -785,6 +798,7 @@ def _render_selection_indices(ax, sd):
 
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
+    ax.grid(True, alpha=0.3)
     ax.legend(loc='best', fontsize='small', framealpha=0.8)
     ax.set_title('Selection index directions: BB vs BBS vs PoB')
     ax.set_xlim([0, 1])
@@ -831,7 +845,6 @@ def _render_yield_ev1_vs_ev2(ax, sd):
     cb = ax.get_figure().colorbar(cf, ax=ax)
     cb.set_label('ΔV (Gain over Baseline)')
     cb.ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
-    #ax.contour(Z_EV1, Z_EV2, mv_interp, levels=[0], colors='k', linewidths=1, linestyles='--')
 
     # Transform breeding ellipse from genotype space to yield space
     ellipse_pts = sd['ellipse_pts']
@@ -910,8 +923,6 @@ def _render_complementarity_ratio(ax, sd):
     cb = ax.get_figure().colorbar(cf, ax=ax)
     cb.set_label(r'$w^*(\mathbf{g}_{\mathrm{new}})$ clipped to $[0,1]$')
 
-  
-
     # w* = 0 and w* = 1 contours
     ax.contour(X, Y, od['w_grid'], levels=[0], colors='magenta',
                linewidths=2, linestyles='-')
@@ -948,6 +959,7 @@ def _render_complementarity_ratio(ax, sd):
 
     ax.set_xlabel("Genotype dim 1")
     ax.set_ylabel("Genotype dim 2")
+    ax.grid(True, alpha=0.3)
     h, l = ax.get_legend_handles_labels()
     ax.legend(h + handles_extra, l + labels_extra,
               loc='lower right', fontsize='small', framealpha=0.8)

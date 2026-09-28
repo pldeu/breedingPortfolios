@@ -1212,8 +1212,15 @@ class ExperimentRunner:
         sd['marker_alpha'] = marker_alpha
 
         n = len(subplot_ids)
-        ncols = math.ceil(math.sqrt(n))
-        nrows = math.ceil(n / ncols)
+
+        # Special layout for 3 subplots: place them horizontally
+        if n == 3:
+            ncols = 3
+            nrows = 1
+        else:
+            ncols = math.ceil(math.sqrt(n))
+            nrows = math.ceil(n / ncols)
+
         axs = fig.subplots(nrows, ncols)
         ax_list = axs.flatten() if hasattr(axs, 'flatten') else [axs]
 
@@ -1242,8 +1249,13 @@ class ExperimentRunner:
             if below < n and ax.get_xlabel() == "Genotype dim 1":
                 ax.set_xlabel("")
 
-        fig.subplots_adjust(top=0.92, bottom=0.05, left=0.05, right=0.95,
-                            hspace=0.4, wspace=0.3)
+        # Adjust spacing based on number of subplots
+        if n == 3:
+            fig.subplots_adjust(top=0.92, bottom=0.1, left=0.08, right=0.95,
+                                hspace=0.3, wspace=0.35)
+        else:
+            fig.subplots_adjust(top=0.92, bottom=0.05, left=0.05, right=0.95,
+                                hspace=0.4, wspace=0.3)
         return fig
 
     # ------------------------------------------------------------------
@@ -1275,7 +1287,12 @@ class ExperimentRunner:
         else:
             subplot_ids = DEFAULT_SUBPLOT_IDS
 
-        fig = Figure(figsize=(15.55, 9.6), dpi=dpi)
+        # Adjust figure size based on number of subplots
+        n = len(subplot_ids) if subplot_ids else len(DEFAULT_SUBPLOT_IDS)
+        if n == 3:
+            fig = Figure(figsize=(18, 5.5), dpi=dpi)
+        else:
+            fig = Figure(figsize=(15.55, 9.6), dpi=dpi)
         self.build_figure(scenario_data_list, fig, subplot_ids=subplot_ids)
         return text_result, fig
 
