@@ -81,7 +81,7 @@ class GurobiPortfolioOptimizer:
             m.addConstr(wf == w_f_given)
 
         if w_m_given != None:
-            m.addConstr(wf == w_m_given)
+            m.addConstr(wm == w_m_given)
 
         # Auxiliary variables for Bilinear terms: z = w * g
         # Since w is in [0, 1], z must be between [min(0, g_min), max(0, g_max)]
