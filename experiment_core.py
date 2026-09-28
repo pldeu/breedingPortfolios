@@ -1292,7 +1292,7 @@ class ExperimentRunner:
         n = len(subplot_ids) if subplot_ids else len(DEFAULT_SUBPLOT_IDS)
         if n == 3:
             # 3 square plots side-by-side: each ~4.5" x 4.5"
-            fig = Figure(figsize=(14.5, 5.5), dpi=dpi)
+            fig = Figure(figsize=(16, 5.2), dpi=dpi)
         else:
             fig = Figure(figsize=(15.55, 9.6), dpi=dpi)
         self.build_figure(scenario_data_list, fig, subplot_ids=subplot_ids)
