@@ -42,7 +42,7 @@ print(f"\nSelected subplots: {subplot_ids}")
 n = len(subplot_ids)
 import math
 if n == 3:
-    figsize = (18, 5.5)
+    figsize = (14.5, 5.5)  # Updated for square subplots
     ncols = 3
     nrows = 1
 else:

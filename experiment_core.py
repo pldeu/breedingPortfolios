@@ -1217,12 +1217,16 @@ class ExperimentRunner:
         if n == 3:
             ncols = 3
             nrows = 1
+            # Use GridSpec to make subplots square
+            from matplotlib.gridspec import GridSpec
+            gs = GridSpec(nrows, ncols, figure=fig, hspace=0.3, wspace=0.4,
+                         top=0.92, bottom=0.1, left=0.08, right=0.95)
+            ax_list = [fig.add_subplot(gs[i]) for i in range(n)]
         else:
             ncols = math.ceil(math.sqrt(n))
             nrows = math.ceil(n / ncols)
-
-        axs = fig.subplots(nrows, ncols)
-        ax_list = axs.flatten() if hasattr(axs, 'flatten') else [axs]
+            axs = fig.subplots(nrows, ncols)
+            ax_list = axs.flatten() if hasattr(axs, 'flatten') else [axs]
 
         for i, key in enumerate(subplot_ids):
             if key in SUBPLOT_REGISTRY:
@@ -1249,11 +1253,8 @@ class ExperimentRunner:
             if below < n and ax.get_xlabel() == "Genotype dim 1":
                 ax.set_xlabel("")
 
-        # Adjust spacing based on number of subplots
-        if n == 3:
-            fig.subplots_adjust(top=0.92, bottom=0.1, left=0.08, right=0.95,
-                                hspace=0.3, wspace=0.35)
-        else:
+        # Adjust spacing based on number of subplots (only for non-3 case; 3-case uses GridSpec)
+        if n != 3:
             fig.subplots_adjust(top=0.92, bottom=0.05, left=0.05, right=0.95,
                                 hspace=0.4, wspace=0.3)
         return fig
@@ -1290,7 +1291,8 @@ class ExperimentRunner:
         # Adjust figure size based on number of subplots
         n = len(subplot_ids) if subplot_ids else len(DEFAULT_SUBPLOT_IDS)
         if n == 3:
-            fig = Figure(figsize=(18, 5.5), dpi=dpi)
+            # 3 square plots side-by-side: each ~4.5" x 4.5"
+            fig = Figure(figsize=(14.5, 5.5), dpi=dpi)
         else:
             fig = Figure(figsize=(15.55, 9.6), dpi=dpi)
         self.build_figure(scenario_data_list, fig, subplot_ids=subplot_ids)
