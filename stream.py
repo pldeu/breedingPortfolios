@@ -154,8 +154,8 @@ with st.spinner("Simulating…"):
         # Adjust figure size based on number of subplots
         n = len(selected_subplot_ids)
         if n == 3:
-            # 3 square plots side-by-side: each ~4.5" x 4.5"
-            fig = Figure(figsize=(16, 5.2), dpi=dpi)
+            # 3 square plots side-by-side with room for colorbars and labels
+            fig = Figure(figsize=(18, 5.5), dpi=dpi)
         else:
             fig = Figure(figsize=(16, 12), dpi=dpi)
         runner.build_figure(

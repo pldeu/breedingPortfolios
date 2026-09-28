@@ -1219,8 +1219,8 @@ class ExperimentRunner:
             nrows = 1
             # Use GridSpec to make subplots square
             from matplotlib.gridspec import GridSpec
-            gs = GridSpec(nrows, ncols, figure=fig, hspace=0.3, wspace=0.4,
-                         top=0.92, bottom=0.1, left=0.08, right=0.95)
+            gs = GridSpec(nrows, ncols, figure=fig, hspace=0.3, wspace=0.5,
+                         top=0.92, bottom=0.12, left=0.06, right=0.96)
             ax_list = [fig.add_subplot(gs[i]) for i in range(n)]
         else:
             ncols = math.ceil(math.sqrt(n))
@@ -1291,8 +1291,8 @@ class ExperimentRunner:
         # Adjust figure size based on number of subplots
         n = len(subplot_ids) if subplot_ids else len(DEFAULT_SUBPLOT_IDS)
         if n == 3:
-            # 3 square plots side-by-side: each ~4.5" x 4.5"
-            fig = Figure(figsize=(16, 5.2), dpi=dpi)
+            # 3 square plots side-by-side with room for colorbars and labels
+            fig = Figure(figsize=(18, 5.5), dpi=dpi)
         else:
             fig = Figure(figsize=(15.55, 9.6), dpi=dpi)
         self.build_figure(scenario_data_list, fig, subplot_ids=subplot_ids)
