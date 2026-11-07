@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
 from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
+import stochastic_core as stc
 
 # ---------------------------------------------------------------------------
 # Strategy registry (metadata only — callables resolved in _build_strategy_map)
@@ -38,7 +39,7 @@ DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'PoB', 'BeatBestS', 'MaxAdoption', 
 class ExperimentRunner:
 # ---------------------------------------------------------------------------
 
-    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=401):
+    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=401, stochastic=None):
         self.p = p
         self.c = c
         self.beta1 = np.array([1.0, c])
@@ -58,6 +59,12 @@ class ExperimentRunner:
         self.X, self.Y = np.meshgrid(self.x, self.y)
         self.replace = replace
         self.grid_dict = None
+
+        # Stochastic extension (farm-level risk). stochastic: None, dict or stc.StochasticSpec.
+        # Inactive (sigma = breeding_sd = 0) reproduces the deterministic model exactly.
+        self.spec = stc.StochasticSpec.from_any(stochastic)
+        self.sigma2 = self.spec.sigma ** 2
+        self.tau2_c = self.spec.tau2(p, c, self.G) if self.spec.timing == 'unknown' else 0.0
 
     # ------------------------------------------------------------------
     # Core grid / portfolio math  (unchanged from GUI version)
@@ -89,14 +96,16 @@ class ExperimentRunner:
         yc_1 = c * X_flat + Y_flat
         mu_c = p * yc_0 + (1 - p) * yc_1
 
-        v_ff = (p * yf[0] ** 2 + (1 - p) * yf[1] ** 2) - mu_f ** 2
-        v_cc = (p * yc_0 ** 2 + (1 - p) * yc_1 ** 2) - mu_c ** 2
+        sig2 = grid.get('sigma2', 0.0)
+        tau2 = grid.get('tau2_c', 0.0)
+        v_ff = (p * yf[0] ** 2 + (1 - p) * yf[1] ** 2) - mu_f ** 2 + sig2
+        v_cc = (p * yc_0 ** 2 + (1 - p) * yc_1 ** 2) - mu_c ** 2 + sig2 + tau2
         v_fc = (p * yf[0] * yc_0 + (1 - p) * yf[1] * yc_1) - mu_f * mu_c
 
         util_pure_c = mu_c - 0.5 * gamma * v_cc
         util_pure_f = mu_f - 0.5 * gamma * v_ff
         if has_mutable:
-            v_mm = (p * ym[0] ** 2 + (1 - p) * ym[1] ** 2) - mu_m ** 2
+            v_mm = (p * ym[0] ** 2 + (1 - p) * ym[1] ** 2) - mu_m ** 2 + sig2
             util_pure_m = mu_m - 0.5 * gamma * v_mm
 
         def solve_2_asset(m1, m2, v11, v22, v12):
@@ -260,7 +269,8 @@ class ExperimentRunner:
                 'w_fix_grid': w_fix_grid, 'w_new_grid': w_new_grid,
                 'p': self.p, 'beta': self.beta, 'r_g': self.r_g,
                 'gamma': self.gamma, 'c': self.c, 'Ginv': self.Ginv,
-                'R': self.R, 'replace': self.replace
+                'R': self.R, 'replace': self.replace,
+                'sigma2': self.sigma2, 'tau2_c': self.tau2_c,
             }
             grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
             grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
@@ -351,7 +361,7 @@ class ExperimentRunner:
         y_env2 = self.c * g0 + 1.0 * g1
         mean_y = self.p * y_env1 + (1 - self.p) * y_env2
         exp_sq_y = self.p * (y_env1 ** 2) + (1 - self.p) * (y_env2 ** 2)
-        var_y = exp_sq_y - mean_y ** 2
+        var_y = exp_sq_y - mean_y ** 2 + self.sigma2
         mv_score = mean_y - 0.5 * self.gamma * var_y
         return mean_y, var_y, mv_score, y_env1, y_env2
 
@@ -408,6 +418,8 @@ class ExperimentRunner:
         return ellipse[:, 0], ellipse[:, 1]
 
     def calculate_stats_from_dict(self, data_dict):
+        if data_dict.get('stochastic'):
+            return data_dict
         gs = data_dict['genotypes']
         w_env1 = data_dict['weights']['env_1']
         w_env2 = data_dict['weights']['env_2']
@@ -433,8 +445,9 @@ class ExperimentRunner:
             'weights': data_dict['weights'], 'genotypes': data_dict['genotypes']
         }
 
-    def _get_standard_output(self, g_list):
-        """Generalized portfolio optimization for arbitrary genotypes using Gurobi."""
+    def _get_standard_output(self, g_list, extra_var=None):
+        """Generalized portfolio optimization for arbitrary genotypes using Gurobi.
+        Adds the farm-level idiosyncratic variance sigma^2 (and optional per-asset extra_var)."""
         def get_y_vec(g):
             return np.array([g[0] + self.c * g[1], self.c * g[0] + g[1]])
 
@@ -442,6 +455,9 @@ class ExperimentRunner:
         probs = np.array([self.p, 1.0 - self.p])
         y_bar = Y.T @ probs
         Sigma = (Y.T * probs) @ Y - np.outer(y_bar, y_bar)
+        Sigma = Sigma + self.sigma2 * np.eye(len(g_list))
+        if extra_var is not None:
+            Sigma = Sigma + np.diag(extra_var)
 
         m = gp.Model()
         m.setParam('OutputFlag', 0)
@@ -526,7 +542,9 @@ class ExperimentRunner:
         return None, details
 
     def _strat_B4P(self, grid):
-        """Maximize Portfolio Utility."""
+        """Maximize Portfolio Utility (E[V] over breeding outcomes when they are known before adoption)."""
+        if self.spec.mc_targets:
+            return None, self._mc_strategy(grid, 'mv')
         return None, grid['optimizer'].strat_B4P()
 
     def _strat_B4M(self, grid):
@@ -538,9 +556,13 @@ class ExperimentRunner:
         return None, grid['optimizer'].strat_max_share()
 
     def _strat_max_investability(self, grid):
+        if self.spec.mc_targets:
+            return None, self._mc_strategy(grid, 'share')
         return None, grid['optimizer'].strat_max_investability(min_improvement=1e-4)
 
     def _strat_max_investability3(self, grid):
+        if self.spec.mc_targets:
+            return None, self._mc_strategy(grid, 'share')
         return None, grid['optimizer'].strat_max_investability(min_improvement=1e-3)
 
     def _strat_BB(self, grid):
@@ -643,8 +665,49 @@ class ExperimentRunner:
         return idx, details
 
     def _strat_hindsight_optimized(self, grid):
-        """Hindsight Portfolio – fully optimized via Gurobi."""
+        """Hindsight Portfolio – fully optimized via Gurobi.
+        Stochastic mode: full information (environment, every farm-level shock, breeding outcome)."""
+        if self.spec.active:
+            if 'clairvoyance' not in grid:
+                grid['clairvoyance'] = stc.clairvoyance_full_info(
+                    *self._stochastic_search_args(grid), project=self._projector(grid))
+            return None, grid['clairvoyance']
         return None, grid['optimizer'].strat_hindsight()
+
+    # ------------------------------------------------------------------
+    # Stochastic helpers (see stochastic_core.py)
+    # ------------------------------------------------------------------
+
+    def _existing_genotypes(self, grid):
+        return [grid['g_fixed']] if self.replace else [grid['g_fixed'], grid['g_mutable']]
+
+    def _projector(self, grid):
+        return stc.EllipseProjector(grid['g_mutable'], self.G, self.R)
+
+    def _stochastic_search_args(self, grid):
+        """(pts, g_existing, p, c, gamma, spec, G, h) for the Monte Carlo searches."""
+        mask = grid['feasible_mask']
+        pts = np.c_[grid['X'][mask], grid['Y'][mask]]
+        pts = pts[np.all(np.abs(pts) <= 1.0, axis=1)]   # same box as the Gurobi models
+        if len(pts) == 0:
+            pts = np.asarray(grid['g_mutable'], float)[None]
+        h = 3 * abs(self.x[1] - self.x[0]) * max(1.0, np.sqrt(len(pts) / self.spec.max_targets))
+        return (pts, self._existing_genotypes(grid), self.p, self.c, self.gamma,
+                self.spec, self.G, h)
+
+    def _mc_strategy(self, grid, objective):
+        """Target maximizing E[V] ('mv') or E[w_c] ('share') when eta is known before adoption."""
+        t = stc.mc_target(*self._stochastic_search_args(grid), objective=objective,
+                          project=self._projector(grid))
+        g_list = self._existing_genotypes(grid) + [t]
+        return {"genotypes": [list(map(float, g)) for g in g_list],
+                "weights": {"env_1": [0.0] * len(g_list), "env_2": [0.0] * len(g_list)}}
+
+    def _evaluate_stochastic(self, name, genotypes):
+        """Farm-level evaluation of a strategy's genotypes under self.spec."""
+        n_existing = len(genotypes) if name == 'Base' else (1 if self.replace else 2)
+        return stc.evaluate_genotypes(genotypes, n_existing, self.p, self.c, self.gamma,
+                                      self.spec, self.G)
 
     def _calculate_split_mv(self, y1, y2):
         """Helper: compute global Mean-Variance from environment-specific yields."""
@@ -989,6 +1052,7 @@ class ExperimentRunner:
                     'p': self.p, 'beta': self.beta, 'r_g': self.r_g,
                     'gamma': self.gamma, 'c': self.c, 'Ginv': self.Ginv,
                     'R': self.R, 'replace': self.replace,
+                    'sigma2': self.sigma2, 'tau2_c': self.tau2_c,
                 }
                 grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
                 grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
@@ -1004,10 +1068,12 @@ class ExperimentRunner:
                 details_per_strategy = {}
                 for name, strat_func in strategies.items():
                     idx, strat_dict = strat_func(grid_dict)
-                    if 'Clairv' not in name:
-                        out_dict = self._get_standard_output(strat_dict['genotypes'])
-                    else:
+                    if 'Clairv' in name:
                         out_dict = self.calculate_stats_from_dict(strat_dict)
+                    elif self.spec.active:
+                        out_dict = self._evaluate_stochastic(name, strat_dict['genotypes'])
+                    else:
+                        out_dict = self._get_standard_output(strat_dict['genotypes'])
                     gain = out_dict['mean_variance'] - base_line['mean_variance']
                     details_per_strategy[name] = {
                         'name': name,
@@ -1150,6 +1216,21 @@ class ExperimentRunner:
 
                 print(sep2)
 
+                if self.spec.active:
+                    sp = self.spec
+                    print()
+                    print(f"Stochastic model (farm level): sigma={sp.sigma:.3f}, breeding_sd={sp.breeding_sd:.3f}, "
+                          f"timing={sp.timing}" + (f", tau2={self.tau2_c:.5f}" if sp.timing == 'unknown' else "")
+                          + f", draws={sp.n_draws}, seed={sp.seed}")
+                    print("Clairvoyance sees environment, all farm-level shocks and the breeding outcome.")
+                    header3 = make_header("Strategy", ["E[MV]", "Gain", "sd(MV)", "P(adopt)", "E[w_c]"])
+                    print(header3)
+                    print(make_separator(["E[MV]", "Gain", "sd(MV)", "P(adopt)", "E[w_c]"]))
+                    for name, res in details_per_strategy.items():
+                        d = res['out_dict']
+                        print(make_row(name, [d['mean_variance'], res['stats']['gain'], d.get('mv_sd', 0.0),
+                                              d.get('p_adopt', float('nan')), d.get('e_wc', 0.0)]))
+
                 scenario_data_list.append({
                     'grid_dict': grid_dict,
                     'details_per_strategy': details_per_strategy,
@@ -1177,6 +1258,7 @@ class ExperimentRunner:
                     'beta2': self.beta2,
                     'p': self.p,
                     'c': self.c,
+                    'stochastic': self.spec.to_dict() if self.spec.active else None,
                 })
 
         text_report = output_buffer.getvalue()

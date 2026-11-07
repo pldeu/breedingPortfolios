@@ -111,6 +111,19 @@ with st.sidebar:
     st.subheader("Simulation Options")
     replace = st.toggle("Replace", value=False)
 
+    # -- Stochastic model (farm-level risk, see stochastic_core.py) --
+    st.subheader("Stochastic Model (farm level)")
+    sigma_farm = st.slider("Farm-level yield noise (sigma)", 0.0, 0.5, 0.0, 0.01, key="sigma_var",
+                           help="Variety-specific yield shock on the farm (variety x farm x year). "
+                                "0 with breeding sd 0 gives the deterministic model.")
+    breeding_sd = st.slider("Breeding outcome sd (s)", 0.0, 0.5, 0.0, 0.01, key="breed_sd_var",
+                            help="Realized candidate = target + eta, eta ~ N(0, s^2 G).")
+    timing = st.radio("Breeding outcome at adoption", ["known", "unknown"], horizontal=True,
+                      key="timing_var",
+                      help="known: farms observe the realized variety before choosing shares. "
+                           "unknown: farms adopt on the target and bear the outcome risk.")
+    stochastic_spec = dict(sigma=sigma_farm, breeding_sd=breeding_sd, timing=timing)
+
     # -- Visualization Options --
     st.subheader("Visualization")
     marker_alpha = st.slider("Marker opacity", 0.1, 1.0, 0.55, 0.05)
@@ -144,6 +157,7 @@ with st.spinner("Simulating…"):
             scenario_pairs=scenario_pairs,
             replace=replace,
             n=401,
+            stochastic=stochastic_spec,
         )
 
         text_result, scenario_data_list = runner.compute(

@@ -18,12 +18,24 @@ class GurobiPortfolioOptimizer:
         self.Ginv = grid_params['Ginv']
         self.replace = grid_params['replace']
 
+        # Stochastic extension (see stochastic_core.py). Both are 0 in the deterministic model.
+        # sig2:   farm-level idiosyncratic yield variance, adds sig2 * sum_i w_i^2 to Var
+        # tau2_c: extra candidate variance when the breeding outcome is unknown at adoption
+        self.sig2 = float(grid_params.get('sigma2', 0.0))
+        self.tau2_c = float(grid_params.get('tau2_c', 0.0))
+
         # Helper: Fixed/Mutable Yield Vectors (Env 1, Env 2)
         # Yield formula: y1 = x + c*y; y2 = c*x + y
         self.yf = self._get_yield_vec(self.g_fixed[0], self.g_fixed[1])
         self.ym = self._get_yield_vec(self.g_mutable[0], self.g_mutable[1])
 
         self.POB_model = None
+
+    def _idio_var(self, wf, wm, wc):
+        """Idiosyncratic part of portfolio variance: sig2*(wf^2+wm^2+wc^2) + tau2_c*wc^2."""
+        if self.sig2 == 0 and self.tau2_c == 0:
+            return 0.0
+        return self.sig2 * (wf * wf + wm * wm + wc * wc) + self.tau2_c * (wc * wc)
 
     def _get_yield_vec(self, x, y):
         """Returns array [y_env1, y_env2]"""
@@ -115,7 +127,7 @@ class GurobiPortfolioOptimizer:
         mu_p = self.p * Yp1 + (1 - self.p) * Yp2
         E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
 
-        obj = mu_p - 0.5 * self.gamma * (E_Yp2 - mu_p * mu_p)
+        obj = mu_p - 0.5 * self.gamma * (E_Yp2 - mu_p * mu_p + self._idio_var(wf, wm, wc))
         m.setObjective(obj, GRB.MAXIMIZE)
 
         # --- 5. Optimize ---
@@ -172,7 +184,7 @@ class GurobiPortfolioOptimizer:
         E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
 
         # Apply the new objective
-        obj = mu_p - 0.5 * gamma * (E_Yp2 - mu_p * mu_p)
+        obj = mu_p - 0.5 * gamma * (E_Yp2 - mu_p * mu_p + self._idio_var(wf, wm, wc))
         m.setObjective(obj, GRB.MAXIMIZE)
 
         # 4. Re-optimize
@@ -309,7 +321,7 @@ class GurobiPortfolioOptimizer:
         E_R_yf = self.p * R1 * self.yf[0] + (1 - self.p) * R2 * self.yf[1]
         # Linear constraint (since yf is const)
         m.addConstr(
-            scale_factor * mu_f - (E_R_yf - mu_p * mu_f) == lam_s - eta_f_s,
+            scale_factor * mu_f - (E_R_yf - mu_p * mu_f) - self.sig2 * wf == lam_s - eta_f_s,
             name="KKT_Stat_F"
         )
 
@@ -318,14 +330,15 @@ class GurobiPortfolioOptimizer:
             mu_m = self.p * self.ym[0] + (1 - self.p) * self.ym[1]
             E_R_ym = self.p * R1 * self.ym[0] + (1 - self.p) * R2 * self.ym[1]
             m.addConstr(
-                scale_factor * mu_m - (E_R_ym - mu_p * mu_m) == lam_s - eta_m_s,
+                scale_factor * mu_m - (E_R_ym - mu_p * mu_m) - self.sig2 * wm == lam_s - eta_m_s,
                 name="KKT_Stat_M"
             )
 
         # -- Candidate Variety C --
         # Quadratic constraint (mu_p * mu_c term)
         m.addQConstr(
-            scale_factor * mu_c - (E_R_yc - mu_p * mu_c) == lam_s - eta_c_s,
+            scale_factor * mu_c - (E_R_yc - mu_p * mu_c) - (self.sig2 + self.tau2_c) * wc
+            == lam_s - eta_c_s,
             name="KKT_Stat_C"
         )
 
@@ -477,14 +490,15 @@ class GurobiPortfolioOptimizer:
         # KKT Stationarity (Scaled)
         mu_f = self.p * self.yf[0] + (1 - self.p) * self.yf[1]
         E_R_yf = self.p * R1 * self.yf[0] + (1 - self.p) * R2 * self.yf[1]
-        m.addConstr(scale_factor * mu_f - (E_R_yf - mu_p * mu_f) == lam_s - eta_f_s)
+        m.addConstr(scale_factor * mu_f - (E_R_yf - mu_p * mu_f) - self.sig2 * wf == lam_s - eta_f_s)
 
         if not self.replace:
             mu_m = self.p * self.ym[0] + (1 - self.p) * self.ym[1]
             E_R_ym = self.p * R1 * self.ym[0] + (1 - self.p) * R2 * self.ym[1]
-            m.addConstr(scale_factor * mu_m - (E_R_ym - mu_p * mu_m) == lam_s - eta_m_s)
+            m.addConstr(scale_factor * mu_m - (E_R_ym - mu_p * mu_m) - self.sig2 * wm == lam_s - eta_m_s)
 
-        m.addQConstr(scale_factor * mu_c - (E_R_yc - mu_p * mu_c) == lam_s - eta_c_s)
+        m.addQConstr(scale_factor * mu_c - (E_R_yc - mu_p * mu_c) - (self.sig2 + self.tau2_c) * wc
+                     == lam_s - eta_c_s)
 
         m.addSOS(GRB.SOS_TYPE1, [wf, eta_f_s])
         m.addSOS(GRB.SOS_TYPE1, [wc, eta_c_s])
@@ -501,7 +515,7 @@ class GurobiPortfolioOptimizer:
         
         # Note: Gurobi's Python interface allows direct quadratic expressions in addQConstr
         utility_constraint = m.addQConstr(
-            mu_p - 0.5 * self.gamma * (E_R2 - mu_p * mu_p) >= target_utility,
+            mu_p - 0.5 * self.gamma * (E_R2 - mu_p * mu_p + self._idio_var(wf, wm, wc)) >= target_utility,
             name="Strict_Improvement"
         )
 
@@ -599,7 +613,8 @@ class GurobiPortfolioOptimizer:
         # Gurobi allows quadratic objectives. 
         # Note: port_mean is linear, port_E_R2 is quadratic. port_mean^2 is quadratic.
         
-        obj = port_mean - 0.5 * self.gamma * (port_E_R2 - port_mean * port_mean)
+        obj = port_mean - 0.5 * self.gamma * (port_E_R2 - port_mean * port_mean
+                                              + self.sig2 * (wf * wf + wm * wm))
         
         m.setObjective(obj, GRB.MAXIMIZE)
         m.optimize()
@@ -610,7 +625,7 @@ class GurobiPortfolioOptimizer:
             w_m_val = wm.X
             final_mean = w_f_val * mu_f + w_m_val * mu_m
             final_E2 = (w_f_val**2 * E_f2) + (w_m_val**2 * E_m2) + (2 * w_f_val * w_m_val * E_fm)
-            final_var = final_E2 - final_mean**2
+            final_var = final_E2 - final_mean**2 + self.sig2 * (w_f_val**2 + w_m_val**2)
             
             return (
                 m.ObjVal, 
@@ -621,7 +636,7 @@ class GurobiPortfolioOptimizer:
             # Should not happen for a simple QP, but safe fallback:
             # Return all-in on F
             mu_f_val = mu_f
-            var_f_val = E_f2 - mu_f**2
+            var_f_val = E_f2 - mu_f**2 + self.sig2
             util = mu_f_val - 0.5 * self.gamma * var_f_val
             return (util, {'wf': 1.0, 'wm': 0.0}, {'mean': mu_f_val, 'var': var_f_val})
 
@@ -665,7 +680,7 @@ class GurobiPortfolioOptimizer:
         cov_fm = get_cov(self.yf, mu_f, self.ym, mu_m)
         
         port_mean = wf * mu_f + wm * mu_m
-        port_var = wf*wf*var_f + wm*wm*var_m + 2*wf*wm*cov_fm
+        port_var = wf*wf*var_f + wm*wm*var_m + 2*wf*wm*cov_fm + self.sig2 * (wf*wf + wm*wm)
         
         obj = port_mean - 0.5 * self.gamma * port_var
         m.setObjective(obj, GRB.MAXIMIZE)
@@ -927,6 +942,7 @@ class GurobiPortfolioOptimizer:
         # Portfolio Stats
         port_mean = np.dot(w_vec, y_bar)
         port_var = w_vec.T @ Sigma @ w_vec
+        port_var += self.sig2 * float(w_vec @ w_vec) + self.tau2_c * w_vec[-1] ** 2
         obj_val = port_mean - 0.5 * self.gamma * port_var
 
         # 4. Return Dictionary
