@@ -327,6 +327,32 @@ portfolio contribution. Large PoB advantages remain where the existing varieties
 toward one environment and the candidate can offset that tilt. The BBS target itself is
 identical in all variants (noise only adds constants to its objective).
 
+### Genotype grid (600 fixed / mutable pairs)
+
+`python stochastic_yield/grid_genotypes.py` (about 15 minutes on 4 cores; results in
+`grid_genotypes.csv`). Only `g_fixed` and `g_mutable` vary (each coordinate in
+{-0.2, 0.1, 0.4, 0.7, 1.0}); other parameters at the `app.py` defaults. Breeding sd 0.05.
+
+| Median / share | deterministic | sigma = 0.10 | outcome known | outcome unknown |
+|---|---|---|---|---|
+| PoB gain | 0.038 | 0.051 | 0.038 | 0.030 |
+| BeatBest gain | 0.030 | 0.038 | 0.032 | 0.023 |
+| BeatBestS gain | 0.016 | 0.035 | 0.021 | 0.009 |
+| MaxMarket gain | 0.004 | 0.049 | 0.034 | 0.012 |
+| Clairvoyance gain | 0.150 | 0.208 | 0.151 | 0.151 |
+| PoB better than BeatBest | 59% | 64% | 66% | 59% |
+| PoB better than BeatBestS | 48% | 72% | 55% | 50% |
+
+* PoB has the highest median gain in every configuration; its mean lead is stable
+  (about 0.03 over BeatBest, 0.008 over BeatBestS).
+* Farm-level noise raises all gains (diversification value) and helps BeatBestS most, yet
+  PoB beats it more often (72%) because mixed portfolios become the rule.
+* Breeding noise with the outcome known leaves gains unchanged (option value offsets the
+  noise); with the outcome unknown all gains drop, BeatBestS most. Knowing the outcome is
+  worth a median 0.007 (max 0.075), never negative.
+* PoB's edge over BeatBestS depends on the fixed variety: balanced (|g1 - g2| <= 0.3)
+  35% wins, mean lead 0.002; tilted toward one environment 54% wins, mean lead 0.010.
+
 ## 7. Farm-level risk: implications and open points
 
 1. **Size of `sigma`.** At farm level the variety-specific shock includes the variety x
