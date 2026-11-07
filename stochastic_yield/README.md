@@ -3,8 +3,10 @@
 This note explores what it would mean to replace the yield model used in
 `experiment_core.py` and `GurobiPortfolioOptimizer.py` by a stochastic one: which
 sources of randomness are worth adding, what they change in each strategy, what they
-leave unchanged, and how to implement them. Claims marked [num] are checked with
-`prototype.py` (numpy only, no Gurobi needed):
+leave unchanged, and how to implement them. Sections 1 to 5 are the exploration;
+Sections 6 and 7 describe the stochastic mode now implemented (farm-level risk,
+full-information Clairvoyance, both timings of the breeding outcome).
+Claims marked [num] are checked with `prototype.py` (numpy only, no Gurobi needed):
 
 ```
 python stochastic_yield/prototype.py            # default scenario of app.py
@@ -178,67 +180,139 @@ Caveats: one market model (three varieties), mean-variance utility, `s = R` is a
 noise case, and noisy outcomes can land outside the ellipse (which is realistic for
 realized response but is part of the measured option value).
 
-## 6. Implementation path in this codebase
+## 6. Implemented stochastic mode
 
-**Step 0, centralize the yield model.** The formula `y1 = g0 + c g1, y2 = c g0 + g1` is
-re-implemented in roughly 80 lines across `experiment_core.py` and
-`GurobiPortfolioOptimizer.py`. A single `YieldModel` object exposing `mean(g)`,
-`cov(g_i, g_j)`, `env_yields(g)` and `sample(g, n)` is a prerequisite for any of the
-steps below and reduces the risk of inconsistent variants.
+### Decisions
 
-**Step 1, S2 in closed form (low effort).** Add a parameter `sigma_id` and add
-`sigma_id^2` on the diagonal only:
+| Question | Decision | Consequence in the code |
+|---|---|---|
+| Whose risk? | **The farm.** `w` are the area shares of a representative farm; `gamma` is the farmer's risk aversion. | `sigma` is the farm-level variety-specific shock and enters every variance as `sigma^2 sum_i w_i^2`. |
+| What does Clairvoyance see? | **Everything**: environment, every farm-level shock `eps_i`, and the breeding outcome `eta`. | New full-information benchmark (`stochastic_core.clairvoyance_full_info`). |
+| When is the breeding outcome known? | **Before adoption** (`timing='known'`, default). The reverse is available as `timing='unknown'`. | `known`: Monte Carlo over `eta` with re-optimized shares. `unknown`: closed form with `tau^2`. |
 
-* `_get_yields_and_stats` (`experiment_core.py:348`): `var_y += sigma_id**2`.
-* `get_exact_grid_stats` (`experiment_core.py:66`): `v_ff, v_mm, v_cc += sigma_id**2`;
-  covariances unchanged. The interior three-asset branch then becomes active.
-* `_get_standard_output` (`experiment_core.py:436`): `Sigma += sigma_id**2 * I`.
-* `w_fix_grid` formulas (`experiment_core.py:247`, `:970`): add `sigma_id**2` to `Var_fix` and `Var_grid`.
-* `calculate_stats_from_dict` (`experiment_core.py:410`) and `strat_hindsight`
-  (`GurobiPortfolioOptimizer.py:944`): add `sigma_id**2 * (p H_1 + (1-p) H_2)`.
-* `strat_B4P` / `change_gamma_B4P` (`GurobiPortfolioOptimizer.py:58`, `:137`): add
-  `sigma_id**2 * (wf*wf + wm*wm + wc*wc)` to the variance. This is convex, so solve
-  times should not suffer.
-* `strat_max_investability` (`GurobiPortfolioOptimizer.py:383`) and
-  `_solve_parent_benchmark`: subtract `sigma_id**2 * w_i` in each stationarity
-  constraint and add the `H(w)` term to the utility constraint.
+### Usage
 
-**Step 2, S1 via more environments.** Generalize the two-term `p, 1-p` sums to
-`sum_k p_k`. Gurobi handles this as a scenario model with no new nonconvexity, and it
-lets you add, for example, a severe year that scales all yields down.
+```python
+from experiment_core import ExperimentRunner
+runner = ExperimentRunner(p, c, gamma, r_g, R, scenario_pairs,
+                          stochastic=dict(sigma=0.10, breeding_sd=0.05, timing='known'))
+text, data = runner.compute(strategy_keys=['Base', 'BeatBest', 'PoB', 'MaxMarket', 'Clairvoyance'])
+```
 
-**Step 3, S3 (breeding noise).** Two options:
+`stochastic=None` (or `sigma = breeding_sd = 0`) reproduces the deterministic results exactly
+(checked byte for byte on the text report). Optional keys: `n_draws` (200), `n_states` (100),
+`n_clair_draws` (50), `max_targets` (1500), `seed`. The Streamlit app (`stream.py`) has
+sliders for `sigma`, `breeding_sd` and the timing. The text report gains a table with
+`E[MV]`, `sd(MV)`, `P(adopt)` and `E[w_c]` per strategy.
 
-* *Grid / Monte Carlo (cheap):* `E[V(t + eta)]` is the `v_port` surface from
-  `get_exact_grid_stats` averaged over `eta`, which for Gaussian `eta` is a blur of that
-  surface. The grid must extend about `3 s` beyond the ellipse.
-* *Sample average approximation in Gurobi:* first-stage target `(gx, gy)` in the
-  ellipse; `K` outcome scenarios with their own weights `w^k` and bilinear terms
-  `wc^k (gx + eta_k)`. Model size grows linearly in `K` but the problem stays nonconvex,
-  so expect `K` in the tens to be practical.
+### What each strategy does
 
-Outputs then become distributions (expected gain, sd, `P(adopt)`, `E[w_c]`, quantiles)
-rather than points, which affects `subplot_registry.py` and the text report.
+| Strategy | `timing='known'` (outcome seen before adoption) | `timing='unknown'` (adopt on the target) |
+|---|---|---|
+| Base | Gurobi QP with `sigma` | same |
+| BeatBest | Gurobi, target unchanged (objective linear in `g`) | same |
+| BeatBestS | Gurobi, target unchanged (noise adds a constant) | same |
+| PoB | target maximizing `E_eta[V(t + eta)]`, Monte Carlo search | Gurobi with `sigma^2 H(w) + tau^2 w_c^2` (exact) |
+| MaxMarket | target maximizing `E_eta[w_c(t + eta)]`, Monte Carlo search | Gurobi MPEC with the extra terms in the KKT conditions |
+| Clairvoyance | full information, same in both timings | same |
 
-**Step 4, S4.** Add `tau^2 w_c^2` to the variance seen by the market at adoption.
+Evaluation: under `known`, each strategy's target is evaluated with fresh breeding draws
+(separate from those used to choose targets, which avoids optimizer's-curse bias), with
+farm shares re-optimized per draw. Under `unknown`, the ex-ante value includes
+`tau^2 = p b1' S b1 + (1-p) b2' S b2`, `S = s^2 G`.
 
-**Step 5, simulation-based evaluation.** Simulate years and farms with the chosen
-portfolios to validate the analytics and to report downside measures (CVaR, probability
-of yield below a threshold), which mean-variance hides.
+Monte Carlo searches use the feasible grid points (coarse subsample, then local grid
+refinement), followed by a continuous pattern search inside the ellipse. They use the
+same box `[-1, 1]^2` as the Gurobi models (`_get_ellipse_bounds`), which the plotting grid
+(up to 1.2) does not.
 
-## 7. Modeling decisions to make first
+Clairvoyance with full information has a closed form per state: with state-contingent
+shares the portfolio yield `Y_k` can be anything between the worst and best variety in
+state `k`, and maximizing `mean - gamma/2 var` gives `Y_k = clip(mu + 1/gamma, lo_k, hi_k)`.
+This reproduces the Gurobi hindsight model exactly in the deterministic case.
 
-1. **Whose risk?** A farm faces temporal, spatial and idiosyncratic risk; national supply
-   faces mostly temporal risk because spatial and plot-level noise average out over
-   many farms. If `w_i` are aggregate area shares, `sigma_id` should be the variety x
-   year interaction (which does not average out), not plot error. `gamma` should match
-   the same level.
-2. **Timing of information.** Is the breeding outcome known before the market adopts
-   (recourse, S3) or only afterwards (extra risk, S4)? The two pull adoption in
-   opposite directions.
-3. **Definition of Clairvoyance** (Section 4).
-4. **Calibration.** `sigma_id^2` relative to the structured GxE implied by `c` can be
-   estimated from variety x year and variety x location x year variance components in
-   multi-environment trial data of the target crop. `Sigma_eta` can be set from the
-   segregation variance of the crosses (roughly proportional to `G`) and the number of
-   lines tested per cycle.
+### Files
+
+* `stochastic_core.py`: spec, exact batched market solver, evaluation, Monte Carlo
+  target search, full-information Clairvoyance.
+* `experiment_core.py`, `GurobiPortfolioOptimizer.py`: `sigma^2` and `tau^2` terms in all
+  default strategies (B4P, B4M, BeatBestS, MaxMarket MPEC, benchmarks, grid statistics).
+  Not extended: `strat_max_share` and the SplitEnv / SplitEffort strategies (their targets
+  stay deterministic; they are still evaluated under the stochastic model).
+* `stochastic_yield/test_stochastic.py`: 8 consistency tests, each comparing two
+  independent computations (Gurobi vs enumeration, closed form vs simulation, box
+  Clairvoyance vs Gurobi hindsight, MPEC shares vs true market response, value of
+  information >= 0, inactive spec = deterministic).
+* `stochastic_yield/compare_timing.py`: the tables below.
+
+### Results
+
+Default scenario (`p=0.5, c=0.1, gamma=21, r_g=-0.4, R=0.1`), `s = R/2`. Gain is
+`E[MV] - base`; the percentage is the share of the Clairvoyance gain.
+
+| Configuration | BeatBest | PoB | MaxMarket | Clairvoyance | PoB `E[w_c]` |
+|---|---|---|---|---|---|
+| deterministic | 0.0243 (44%) | 0.0377 (69%) | 0.0000 (0%) | 0.0547 | 0.37 |
+| sigma = 0.10 | 0.0263 (19%) | 0.0367 (26%) | 0.0357 (26%) | 0.1392 | 0.39 |
+| s = R/2, known | 0.0246 (39%) | 0.0368 (59%) | 0.0353 (56%) | 0.0628 | 0.35 |
+| s = R/2, unknown | 0.0201 (32%) | 0.0346 (55%) | 0.0044 (7%) | 0.0628 | 0.36 |
+| sigma = 0.10, s = R/2, known | 0.0277 (20%) | 0.0366 (26%) | 0.0351 (25%) | 0.1400 | 0.35 |
+| sigma = 0.10, s = R/2, unknown | 0.0235 (17%) | 0.0333 (24%) | 0.0328 (23%) | 0.1400 | 0.36 |
+
+30 random scenarios (`python stochastic_yield/compare_timing.py --sweep 30`, about 2
+minutes), `sigma = 0.10`, `s = R/2`, medians:
+
+| | deterministic | known | unknown |
+|---|---|---|---|
+| PoB gain | 0.071 | 0.079 | 0.061 |
+| BeatBest gain | 0.048 | 0.059 | 0.042 |
+| MaxMarket gain | 0.028 | 0.078 | 0.057 |
+| Clairvoyance gain | 0.124 | 0.227 | 0.227 |
+| PoB gain as share of Clairvoyance | 0.65 | 0.39 | 0.26 |
+| PoB candidate share `E[w_c]` | 0.63 | 0.51 | 0.41 |
+| PoB better than BeatBest | 70% | 77% | 77% |
+| PoB minus BeatBest gain | 0.0009 | 0.0020 | 0.0020 |
+
+* **Knowing the outcome before adoption is worth a lot**: for PoB the gain is higher
+  under `known` in every scenario (median difference 0.014, up to 0.11), about a fifth
+  of the PoB gain. Adopting before the outcome is known lowers the candidate's share
+  (0.51 to 0.41) because farms treat the uncertain variety as riskier (novelty penalty).
+* **The PoB target hardly depends on the timing** (median shift 0.009 genotype units);
+  the timing mainly changes how much of it farms adopt.
+* **PoB keeps its edge over BeatBest** and slightly widens it under farm-level risk
+  (better in 77% of scenarios vs 70% deterministic).
+* **MaxMarket is defined differently per timing**: `known` maximizes the expected share
+  over outcomes (and lands close to PoB); `unknown` keeps the MPEC that maximizes the share
+  subject to a minimal improvement, which tends to give small utility gains. Compare
+  their shares, not their gains.
+
+## 7. Farm-level risk: implications and open points
+
+1. **Size of `sigma`.** At farm level the variety-specific shock includes the variety x
+   location x year interaction and, when each variety sits on its own field, field-level
+   error. Neither averages out within a farm, so `sigma` is larger than it would be for
+   national supply. Shocks shared by all varieties on the farm (weather beyond the
+   environment type, management) do not change decisions and need not be modeled.
+   Calibration: variance components of variety x location x year interaction and plot
+   residual in multi-environment trial data of the target crop.
+2. **Normalized gains shrink.** Because Clairvoyance sees every farm-level shock, its gain
+   grows quickly with `sigma` (0.055 to 0.139 in the default scenario), while breeding
+   strategies cannot exploit those shocks. Gains expressed as a share of Clairvoyance
+   (`compute()` with `easy_base=False`, used in the plots) fall from 69% to 26% for PoB.
+   Absolute gains are the more stable comparison.
+3. **Clairvoyance does not always pick the best variety.** Under mean-variance, yields
+   above `mu + 1/gamma` lower utility, so the clairvoyant deliberately caps them. This
+   already holds in the existing Gurobi hindsight model (interior shares in environment 1)
+   and binds more often with farm-level noise. An expected-utility or "always pick the
+   best" benchmark would avoid it.
+4. **Number of varieties.** With `sigma > 0` every additional variety lowers farm risk,
+   so the model favors spreading area. Real farms grow few varieties (seed logistics,
+   management), so a fixed cost per variety or a cap on the number of varieties may be
+   needed before drawing conclusions about adoption.
+5. **Market share = representative farm.** With identical farms, a variety's market
+   share equals its share on the representative farm. Farms that differ in `p`,
+   `gamma` or `sigma` would make market share an average of farm-level shares, which
+   smooths adoption. Not implemented.
+6. **`unknown` timing treats `eta` as one-year risk.** The breeding outcome is permanent
+   for a variety, so over several seasons it does not average out the way environment
+   and farm shocks do. A multi-year objective would penalize it more than `tau^2` does.
