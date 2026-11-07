@@ -17,7 +17,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from experiment_core import ExperimentRunner  # noqa: E402
 
-KEYS = ['Base', 'BeatBest', 'PoB', 'MaxMarket', 'Clairvoyance']
+KEYS = ['Base', 'BeatBest', 'BeatBestS', 'PoB', 'MaxMarket', 'Clairvoyance']
 DEFAULT = dict(p=0.5, c=0.1, gamma=21.0, r_g=-0.4, R=0.1, g_fixed=(0.6, 0.2), g_mutable=(-0.1, 0.2))
 
 
@@ -49,14 +49,16 @@ def default_table():
         ("sigma=0.10, s=R/2, unknown", dict(sigma=0.10, breeding_sd=R / 2, timing='unknown')),
     ]
     print("Default scenario of app.py. Gain = E[MV] - base; % = share of the Clairvoyance gain.")
-    print(f"{'configuration':28s} {'BeatBest':>16s} {'PoB':>16s} {'MaxMarket':>16s} {'Clairv':>8s}"
-          f" {'PoB E[w_c]':>10s} {'PoB P(adopt)':>12s}")
+    print(f"{'configuration':28s} {'BeatBest':>16s} {'BeatBestS':>16s} {'PoB':>16s} {'MaxMarket':>16s}"
+          f" {'Clairv':>8s} {'BBS E[w_c]':>10s} {'BBS P(ad)':>9s} {'PoB E[w_c]':>10s} {'PoB P(ad)':>9s}")
     for label, spec in configs:
         t = time.time()
         o = run(DEFAULT, spec, n=401)
-        cells = " ".join(f"{o[k]['gain']:8.4f} ({100 * o[k]['norm']:4.0f}%)" for k in ('BeatBest', 'PoB', 'MaxMarket'))
-        print(f"{label:28s} {cells} {o['Clairvoyance']['gain']:8.4f} {o['PoB']['e_wc']:10.3f}"
-              f" {o['PoB']['p_adopt']:12.2f}   [{time.time() - t:.1f}s]")
+        cells = " ".join(f"{o[k]['gain']:8.4f} ({100 * o[k]['norm']:4.0f}%)"
+                         for k in ('BeatBest', 'BeatBestS', 'PoB', 'MaxMarket'))
+        print(f"{label:28s} {cells} {o['Clairvoyance']['gain']:8.4f} {o['BeatBestS']['e_wc']:10.3f}"
+              f" {o['BeatBestS']['p_adopt']:9.2f} {o['PoB']['e_wc']:10.3f}"
+              f" {o['PoB']['p_adopt']:9.2f}   [{time.time() - t:.1f}s]")
 
 
 def random_params(rng):
@@ -87,15 +89,23 @@ def sweep(n, sigma=0.10, rel_s=0.5, seed=11):
 
     line("median PoB gain", lambda o: o['PoB']['gain'])
     line("median BeatBest gain", lambda o: o['BeatBest']['gain'])
+    line("median BeatBestS gain", lambda o: o['BeatBestS']['gain'])
     line("median MaxMarket gain", lambda o: o['MaxMarket']['gain'])
     line("median Clairvoyance gain", lambda o: o['Clairvoyance']['gain'])
     line("median PoB share of Clairvoyance", lambda o: o['PoB']['norm'], "{:10.2f}")
     line("median PoB E[w_c]", lambda o: o['PoB']['e_wc'], "{:10.3f}")
     line("median BeatBest E[w_c]", lambda o: o['BeatBest']['e_wc'], "{:10.3f}")
+    line("median BeatBestS E[w_c]", lambda o: o['BeatBestS']['e_wc'], "{:10.3f}")
     for i, lab in ((0, 'deterministic'), (1, 'known'), (2, 'unknown')):
-        adv = np.array([r[i]['PoB']['gain'] - r[i]['BeatBest']['gain'] for r in rows])
-        print(f"PoB - BeatBest gain, {lab:14s} median {np.median(adv):8.4f}, PoB better in"
-              f" {100 * np.mean(adv > 1e-5):3.0f}%")
+        print(f"BeatBestS adopted (E[w_c] > 1e-3), {lab:14s} in"
+              f" {100 * np.mean([r[i]['BeatBestS']['e_wc'] > 1e-3 for r in rows]):3.0f}% of scenarios")
+    for other in ('BeatBest', 'BeatBestS'):
+        for i, lab in ((0, 'deterministic'), (1, 'known'), (2, 'unknown')):
+            adv = np.array([r[i]['PoB']['gain'] - r[i][other]['gain'] for r in rows])
+            print(f"PoB - {other:9s} gain, {lab:14s} median {np.median(adv):8.4f}, mean {adv.mean():8.4f},"
+                  f" PoB better in {100 * np.mean(adv > 1e-5):3.0f}%")
+    shift = np.array([np.linalg.norm(r[0]['BeatBestS']['g'] - r[1]['BeatBestS']['g']) for r in rows])
+    print(f"BeatBestS target shift deterministic vs stochastic: max {shift.max():.2e} (should be ~0)")
     voi = np.array([r[1]['PoB']['gain'] - r[2]['PoB']['gain'] for r in rows])
     print(f"value of knowing the outcome before adoption (PoB): median {np.median(voi):.4f},"
           f" min {voi.min():.4f}, max {voi.max():.4f}")

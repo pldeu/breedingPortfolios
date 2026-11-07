@@ -286,6 +286,47 @@ minutes), `sigma = 0.10`, `s = R/2`, medians:
   subject to a minimal improvement, which tends to give small utility gains. Compare
   their shares, not their gains.
 
+### PoB vs BeatBestS
+
+BeatBestS (BBS) maximizes the candidate's own mean-variance; PoB maximizes the farm
+portfolio's. They differ only in which risk they count: BBS counts the candidate's own
+risk, PoB its contribution to the farm's risk given the varieties already grown.
+
+Default scenario (gain over the base portfolio):
+
+| | deterministic | sigma=0.10 | s=R/2 known | s=R/2 unknown | both, known | both, unknown |
+|---|---|---|---|---|---|---|
+| BBS gain | 0.0000 | 0.0026 | 0.0021 | 0.0000 | 0.0056 | 0.0022 |
+| BBS share `E[w_c]` | 0.00 | 0.12 | 0.07 | 0.00 | 0.13 | 0.11 |
+| PoB gain | 0.0377 | 0.0367 | 0.0368 | 0.0346 | 0.0366 | 0.0333 |
+
+The fixed variety is an environment-1 specialist (yields 0.62 / 0.26). The farm hedges it
+with the weak environment-2 variety (mutable, -0.08 / 0.19). PoB breeds a stronger
+environment-2 specialist (-0.09 / 0.29): poor alone, but a better hedge that replaces the
+mutable variety. BBS breeds the variety that is most stable alone (0.02 / 0.15). The farm
+already gets stability by mixing, so this candidate adds nothing in the deterministic
+model. With farm-level noise it gets a 12% share for diversification only, and its gain
+(0.0026) is below that of releasing an exact copy of the mutable parent (0.0090). With
+known breeding noise BBS gains option value (adopted in 17% of draws); with unknown timing
+the extra outcome risk keeps it out.
+
+Over the 30 random scenarios, classified by the PoB candidate's share:
+
+| Situation | deterministic | sigma = 0.10 | PoB minus BBS gain |
+|---|---|---|---|
+| candidate not adopted by either | 8 | 4 | 0 (tie) |
+| farm grows only the candidate (`w_c = 1`) | 13 | 4 | 0 (tie: portfolio risk = own risk) |
+| mixed portfolio | 9 | 22 | deterministic median 0.018; sigma median 0.002 (max about 0.06 in both) |
+
+So PoB and BBS tie whenever the candidate is either rejected or grown alone, which is
+common in the deterministic model (21 of 30) because it favors corner portfolios (F2).
+Farm-level noise makes mixed portfolios the rule, so PoB beats BBS more often (30% of
+scenarios deterministic, 70% known, 73% unknown), but usually by less: the mixing is now
+driven by diversification, where the candidate's own risk is a good proxy for its
+portfolio contribution. Large PoB advantages remain where the existing varieties are tilted
+toward one environment and the candidate can offset that tilt. The BBS target itself is
+identical in all variants (noise only adds constants to its objective).
+
 ## 7. Farm-level risk: implications and open points
 
 1. **Size of `sigma`.** At farm level the variety-specific shock includes the variety x
