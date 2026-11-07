@@ -273,9 +273,9 @@ minutes), `sigma = 0.10`, `s = R/2`, medians:
 | PoB better than BeatBest | 70% | 77% | 77% |
 | PoB minus BeatBest gain | 0.0009 | 0.0020 | 0.0020 |
 
-* **Knowing the outcome before adoption is worth a lot**: for PoB the gain is higher
-  under `known` in every scenario (median difference 0.014, up to 0.11), about a fifth
-  of the PoB gain. Adopting before the outcome is known lowers the candidate's share
+* **Knowing the outcome before adoption is worth a lot**: for PoB the gain under
+  `known` is never lower beyond Monte Carlo noise (median difference 0.014, up to 0.11),
+  roughly a fifth of the median PoB gain. Adopting before the outcome is known lowers the candidate's share
   (0.51 to 0.41) because farms treat the uncertain variety as riskier (novelty penalty).
 * **The PoB target hardly depends on the timing** (median shift 0.009 genotype units);
   the timing mainly changes how much of it farms adopt.
