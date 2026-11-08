@@ -1,0 +1,113 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\usetheme{default}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+\usepackage{booktabs,amsmath}
+\newcommand{\bg}{\mathbf{g}}
+
+\title{A stochastic extension of portfolio-oriented breeding}
+\subtitle{Model changes and consequences for the paper}
+\date{}
+
+\begin{document}
+
+% ------------------------------------------------------------
+\begin{frame}{1. Model: two new sources of randomness}
+\begin{columns}[T]
+\column{0.5\textwidth}
+\textbf{Current model}
+\[
+Y_j(\bg)=\boldsymbol\beta_j^\top\bg,\quad E_j\sim\{p,\,1-p\}
+\]
+\begin{itemize}
+\item Only the envirotype is random
+\item Breeding is deterministic: $\bg_{\text{new}}\in\Omega_G$ exactly
+\item Covariance has rank one, so varieties correlate at $\pm1$
+\end{itemize}
+
+\column{0.5\textwidth}
+\textbf{Extension}
+\begin{enumerate}
+\item \textbf{Variety-specific yield noise}
+\[
+Y_{ij}=\boldsymbol\beta_j^\top\bg_i+\varepsilon_i,\quad \varepsilon_i\sim\mathcal N(0,\sigma^2)
+\]
+\[
+\Rightarrow\ \mathrm{Var}(Y_P)=\text{(old)}+\sigma^2\textstyle\sum_i w_i^2
+\]
+\item \textbf{Uncertain breeding outcome}
+\[
+\bg_{\text{new}}=\mathbf t+\boldsymbol\eta,\quad \boldsymbol\eta\sim\mathcal N(\mathbf 0,s^2\mathbf G)
+\]
+\begin{itemize}
+\item \emph{known}: farmers see $\bg_{\text{new}}$ before adopting
+\item \emph{unknown}: candidate carries extra variance\\ $\tau^2=p\boldsymbol\beta_1^\top S\boldsymbol\beta_1+(1-p)\boldsymbol\beta_2^\top S\boldsymbol\beta_2$, $S=s^2\mathbf G$
+\end{itemize}
+\end{enumerate}
+\end{columns}
+\vspace{2mm}
+\small $\sigma=s=0$ reproduces the current model exactly. Clairvoyance sees envirotype, all $\varepsilon_i$ and $\boldsymbol\eta$.
+\end{frame}
+
+% ------------------------------------------------------------
+\begin{frame}{2. Results at the paper's settings}
+\small $p=0.5,\ c=0.1,\ \rho_g=0,\ \lambda=19.25,\ R=0.1$; 600 incumbent pairs on $[0,1]^2$ (step 0.25); $\sigma=0.10$, $s=0.05$.
+\vspace{2mm}
+
+\centering
+\begin{tabular}{lcccc}
+\toprule
+ & Deterministic & Yield noise & Breeding, known & Breeding, unknown\\
+\midrule
+PoB $\ge$20\% better than BeatBestS & 31.7\% & 34.0\% & 33.7\% & 34.0\%\\
+PoB $\ge$20\% better than BeatBest & 26.7\% & 28.3\% & 31.5\% & 28.0\%\\
+Median raw PoB gain & 0.045 & 0.048 & 0.045 & \textbf{0.037}\\
+Median normalized PoB gain & 0.39 & \textbf{0.28} & 0.42 & 0.31\\
+PoB candidate mixed with incumbents & 44\% & \textbf{77\%} & \textbf{82\%} & 43\%\\
+\bottomrule
+\end{tabular}
+\vspace{3mm}
+\raggedright
+\begin{itemize}
+\item \textbf{PoB's advantage is robust}: dominance shares move by at most 5 points.
+\item \textbf{Normalized gains fall} only because Clairvoyance exploits the noise; raw gains do not.
+\item \textbf{Adopting before the outcome is known costs about 18\%} of the PoB gain.
+\item Mixed portfolios become the rule: three-variety portfolios appear.
+\end{itemize}
+\end{frame}
+
+% ------------------------------------------------------------
+\begin{frame}{3. What would change in the paper}
+\small
+\begin{tabular}{p{0.34\textwidth}p{0.6\textwidth}}
+\toprule
+\textbf{Section} & \textbf{Change}\\
+\midrule
+Model: determinism in breeding & Replace by $\bg_{\text{new}}=\mathbf t+\boldsymbol\eta$ with known / unknown timing\\
+Yield moments, rank-one paragraph & Add $\sigma^2\sum w_i^2$; rank one becomes the $\sigma=0$ special case\\
+Representative farmer & Decide: regional mix (small $\sigma$) or farm level (larger $\sigma$)\\
+App.: at most two varieties; parent redundancy & Hold only for $\sigma=0$\\
+Theorem PoB\_FOC ($\lambda$-independent direction) & Fails for $\sigma>0$; soften ``breeders need not know $\lambda$''\\
+Normalized gains (Table, ECDF) & Keep envirotype-only Clairvoyance or report raw gains\\
+MaxMarket results & Rerun with one consistent definition across variants\\
+Decision tree & Refit: PoB also wins without opposite specialization\\
+Discussion: release testing & New result: value of knowing the outcome before adoption\\
+Limitations & ``Stochastic response to selection'' moves from future work to done\\
+Kansas & Unchanged (empirical covariances already include noise)\\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+% ------------------------------------------------------------
+\begin{frame}{4. Open points before revising}
+\begin{enumerate}
+\item \textbf{Check BeatBest dominance}: our deterministic run gives 26.7\% vs 55.6\% in the paper (coarse grid or a different definition).
+\item \textbf{Choose the risk level}: regional vs farm, which sets the size of $\sigma$.
+\item \textbf{Choose the Clairvoyance benchmark}: sees envirotype only, or everything.
+\item \textbf{Rerun at full resolution} (step 0.05, about 195{,}000 scenarios; several hours).
+\end{enumerate}
+\vspace{4mm}
+\textbf{Bottom line:} the stochastic model leaves the main message intact, adds a value-of-information result, and turns the two-variety theorems into deterministic special cases.
+\end{frame}
+
+\end{document}
