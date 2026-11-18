@@ -2,7 +2,10 @@
 
 The four known-timing conditions are deterministic, yield-noise only,
 breeding-outcome only, and both sources. Unknown breeding timing is omitted.
-Results checkpoint to outputs/stochastic_paper_grid_full_rerun_20261117_v2.
+Clairvoyance sees the environment, realized yield shocks, and known breeding
+outcome. Its ex-ante value is estimated on 128 common outcome states when
+yield noise is active. Results use a new directory so the prior analytic-risk
+Clairvoyance checkpoint remains available for comparison.
 """
 
 from __future__ import annotations
@@ -22,10 +25,11 @@ from experiment_core import ExperimentRunner
 
 
 ROOT = Path(__file__).resolve().parent
-OUTDIR = ROOT / "outputs" / "stochastic_paper_grid_full_rerun_20261117_v2"
+OUTDIR = ROOT / "outputs" / "stochastic_paper_grid_god_mode_20261118"
 RESULTS = OUTDIR / "results.csv"
 PROGRESS = OUTDIR / "progress.json"
 README = OUTDIR / "README.md"
+CLAIRVOYANCE_MODEL = "god_mode_known_eta_and_observed_yield_shocks_saa128_v1"
 # The user authorized this follow-on grid to use all available logical cores.
 WORKERS = os.cpu_count() or 1
 N_INTERNAL = 401
@@ -80,6 +84,7 @@ def _run_one(job: tuple[int, int, str, float, float, tuple, tuple]) -> dict:
         "g_fixed_2": g_fixed[1],
         "g_mutable_1": g_mutable[0],
         "g_mutable_2": g_mutable[1],
+        "clairvoyance_model": CLAIRVOYANCE_MODEL,
         "status": "ERROR",
         "error": "",
         "maxmarket_error": "",
@@ -142,6 +147,9 @@ def _run_one(job: tuple[int, int, str, float, float, tuple, tuple]) -> dict:
                 row["clairvoyance_solver_gap_target"] = certificate.get(
                     "requested_relative_gap", ""
                 )
+                row["clairvoyance_state_count"] = result["out_dict"].get(
+                    "state_count", 2
+                )
 
         # Run MaxMarket separately so an infeasible MaxMarket optimization
         # does not erase the other strategy results for this scenario.
@@ -156,6 +164,11 @@ def _run_one(job: tuple[int, int, str, float, float, tuple, tuple]) -> dict:
             # Score the actual MaxMarket policy weights. Re-optimizing weights
             # for its chosen genotype would no longer measure max investability.
             maxmarket = runner.calculate_stats_from_dict(policy)
+            states = data["grid_dict"].get("clairvoyance_states")
+            if states is not None:
+                maxmarket = runner._evaluate_policy_on_states(
+                    maxmarket, states, candidate_is_new=True
+                )
             row["maxmarket_mean_variance"] = float(maxmarket["mean_variance"])
             row["maxmarket_mean"] = float(maxmarket["mean"])
             row["maxmarket_variance"] = float(maxmarket["variance"])
@@ -197,6 +210,7 @@ def _jobs(done: set[int]):
 def _is_certified_row(row: dict[str, str]) -> bool:
     return (
         row.get("status") == "OK"
+        and row.get("clairvoyance_model") == CLAIRVOYANCE_MODEL
         and not row.get("maxmarket_error")
         and row.get("maxmarket_solver_status") in {"OPTIMAL", "OPTIMAL_STATUS_QUO"}
         and row.get("clairvoyance_solver_gap") not in (None, "")
@@ -217,6 +231,7 @@ def _write_progress(completed: int, ok: int, errors: int, started: float,
     payload = {
         "completed": completed,
         "total": TOTAL,
+        "clairvoyance_model": CLAIRVOYANCE_MODEL,
         "succeeded": ok,
         "errors": errors,
         "fraction": completed / TOTAL,
@@ -253,7 +268,7 @@ def main() -> None:
     prior_elapsed = float(previous.get("elapsed_seconds", 0.0))
     prior_rate = float(previous.get("scenarios_per_second", 1.0 / 2.81))
     README.write_text(
-        "# Stochastic paper-grid full rerun (2026-11-17)\n\n"
+        "# Stochastic paper-grid god-mode rerun (2026-11-18)\n\n"
         "The full grid has 21 values (0, 0.05, ..., 1) for each of four "
         "genotype coordinates, for 21^4 = 194,481 cells per condition. "
         "All fixed/mutable combinations are included. Four conditions use known "
@@ -262,9 +277,13 @@ def main() -> None:
         "Unknown timing is omitted. Parameters are p=0.5, c=0.1, gamma=19.25, "
         "r_g=0, R=0.1, internal n=401, seed=42. MaxMarket and Clairvoyance "
         "target relative MIP gap 1e-4. Strategy weights, genotype solutions, "
-        "and per-scenario gains are retained. For known breeding outcomes, the\n"
-        "realized genotype is used directly; yield noise is integrated as a\n"
-        "variance penalty and is not revealed to the policy.\n",
+        "and per-scenario gains are retained. For Clairvoyance, each outcome\n"
+        "state reveals the environment, yield shock for every variety, and the\n"
+        "known breeding outcome. With sigma>0, ex-ante value is approximated\n"
+        "using 128 antithetic states. Ordinary strategies are scored on the same\n"
+        "state sample but do not observe yield shocks when choosing weights.\n"
+        "The previous v2 checkpoint used analytic yield-risk Clairvoyance and\n"
+        "is preserved separately; this run starts fresh to avoid mixing models.\n",
         encoding="utf-8",
     )
     persisted = set()
@@ -276,6 +295,7 @@ def main() -> None:
     fields = [
         "job_id", "pair_id", "condition", "sigma", "breeding_sd",
         "g_fixed_1", "g_fixed_2", "g_mutable_1", "g_mutable_2",
+        "clairvoyance_model", "clairvoyance_state_count",
         "eta_1", "eta_2", "status", "error",
         "maxmarket_error", "pob_candidate_share_env1", "pob_candidate_share_env2",
         "maxmarket_solver_status", "maxmarket_solver_gap", "maxmarket_solver_bound",

@@ -697,17 +697,14 @@ class ExperimentRunner:
         return idx, details
 
     def _strat_hindsight_optimized(self, grid):
-        """Optimize the hindsight policy for the information actually observed."""
-        if self.breeding_timing == 'known':
-            # The realized breeding outcome is already incorporated into the
-            # candidate genotype/ellipse. Yield noise is risk, not an observed
-            # shock, so optimize over environment-contingent weights with its
-            # analytic variance penalty.
-            return None, grid['optimizer'].strat_hindsight()
-        if self.sigma > 0 or self.breeding_sd > 0:
+        """Optimize Clairvoyance with perfect knowledge of each realized state."""
+        if self.sigma > 0 or (self.breeding_timing != 'known' and self.breeding_sd > 0):
             return None, grid['optimizer'].strat_hindsight_full_information(
                 grid['clairvoyance_states']
             )
+        # With no realized yield shocks, the exact two-environment formulation
+        # already gives Clairvoyance perfect knowledge of the environment and
+        # of the known breeding outcome.
         return None, grid['optimizer'].strat_hindsight()
 
     def _make_clairvoyance_states(self, seed, base_draws=32, condition_on_eta=False):
@@ -1093,19 +1090,22 @@ class ExperimentRunner:
 
                 U_fix = self.get_mean_yield(g_fixed)
                 Var_fix = self.get_variance(g_fixed)
-                if stochastic_active and self.breeding_timing != 'known':
+                if self.sigma > 0 or (
+                    stochastic_active and self.breeding_timing != 'known'
+                ):
                     clairvoyance_states = self._make_clairvoyance_states(
                         self.random_state + 1009 * id,
-                        # The breeding target is chosen before eta in both
-                        # timing modes. Clairvoyance observes eta before
-                        # adoption, so eta must vary across its outcome states.
-                        condition_on_eta=False,
+                        # In known-timing runs, condition every outcome state
+                        # on this instance's revealed breeding result. Yield
+                        # shocks still vary across states and are observed by
+                        # Clairvoyance before it selects adoption and weights.
+                        condition_on_eta=(self.breeding_timing == 'known'),
                     )
                 else:
                     clairvoyance_states = None
                 base_assets = [g_fixed] if self.replace else [g_fixed, g_mutable]
                 base_line = self._get_standard_output(base_assets)
-                if stochastic_active and self.breeding_timing != 'known':
+                if clairvoyance_states is not None:
                     base_line = self._evaluate_policy_on_states(
                         base_line, clairvoyance_states, candidate_is_new=False
                     )
@@ -1173,11 +1173,16 @@ class ExperimentRunner:
                         # scoring it; re-optimizing them would turn it into a
                         # different strategy.
                         out_dict = self.calculate_stats_from_dict(strat_dict)
+                        if clairvoyance_states is not None:
+                            out_dict = self._evaluate_policy_on_states(
+                                out_dict, clairvoyance_states,
+                                candidate_is_new=(name != 'Base'),
+                            )
                     elif 'Clairv' not in name:
                         out_dict = self._get_standard_output(
                             strat_dict['genotypes'], candidate_is_new=(name != 'Base')
                         )
-                        if stochastic_active and self.breeding_timing != 'known':
+                        if clairvoyance_states is not None:
                             out_dict = self._evaluate_policy_on_states(
                                 out_dict, clairvoyance_states,
                                 candidate_is_new=(name != 'Base'),

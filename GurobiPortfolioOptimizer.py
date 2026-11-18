@@ -1340,7 +1340,15 @@ class GurobiPortfolioOptimizer:
                        sum(prob * item[3].X for prob, item in zip(local_probabilities, selected))]
             env_weights[key] = avg
 
-        reported_candidate = np.array([tx.X, ty.X], dtype=float)
+        reported_target = np.array([tx.X, ty.X], dtype=float)
+        eta_values = np.asarray([state['eta'] for state in states], dtype=float)
+        if len(eta_values) and np.allclose(eta_values, eta_values[0], atol=1e-12, rtol=0.0):
+            # In known-timing runs the breeding outcome is fixed across the
+            # state sample, so report the realized candidate genotype. In
+            # unknown-timing runs, report the pre-outcome breeding target.
+            reported_candidate = reported_target + eta_values[0]
+        else:
+            reported_candidate = reported_target
         genotypes = ([self.g_fixed.tolist(), reported_candidate.tolist()] if self.replace else
                      [self.g_fixed.tolist(), self.g_mutable.tolist(), reported_candidate.tolist()])
         try:
@@ -1372,7 +1380,7 @@ class GurobiPortfolioOptimizer:
             "variance": var,
             "full_information": True,
             "state_count": len(states),
-            "target": [float(tx.X), float(ty.X)],
+            "target": reported_target.tolist(),
             "full_information_policy": full_information_policy,
             "solver_certificate": {
                 'status': 'OPTIMAL',
