@@ -2,21 +2,30 @@
 
 ## Current checkpoint
 
-The run is stopped. Its saved results are here:
+The run is stopped. The saved results are in:
 
-`app/breedingPortfolios/outputs/stochastic_paper_grid_full_rerun_20261117_v2/`
+`outputs/stochastic_paper_grid_full_rerun_20261117_v2/`
 
-The CSV currently has **329,662 certified cells out of 777,924**. It also has three unsuccessful rows; the resume script will retry those cells. The CSV parsed without malformed rows. Keep `results.csv` and `progress.json` together.
+The CSV has **329,662 certified cells out of 777,924**. It also has three unsuccessful rows; the resume script will retry those cells. The CSV parsed without malformed rows. Keep `results.csv` and `progress.json` together.
 
-## Move the run
+## Get the files
 
-Copy the **whole** `app/breedingPortfolios` folder to the faster computer, including the output folder above. Do not open or edit `results.csv` in Excel. It is large (about 558 MB).
+Install Git, Git LFS, Python, and the packages this project uses (including Gurobi's Python package). A working Gurobi license is required.
 
-The computer needs Python, the packages used by this project (including Gurobi's Python package), and a working Gurobi license. Use the same environment that can run `experiment_core.py`.
+In PowerShell, run:
+
+```powershell
+git lfs install
+git clone https://github.com/pldeu/breedingPortfolios.git
+cd .\breedingPortfolios
+git lfs pull
+```
+
+This downloads the large checkpoint CSV as well as the code and guide.
 
 ## Resume it
 
-Open PowerShell in the copied `breedingPortfolios` folder and run:
+From the `breedingPortfolios` folder, run:
 
 ```powershell
 python .\run_stochastic_paper_grid.py
