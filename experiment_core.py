@@ -698,14 +698,9 @@ class ExperimentRunner:
 
     def _strat_hindsight_optimized(self, grid):
         """Optimize Clairvoyance with perfect knowledge of each realized state."""
-        if self.sigma > 0 or (self.breeding_timing != 'known' and self.breeding_sd > 0):
-            return None, grid['optimizer'].strat_hindsight_full_information(
-                grid['clairvoyance_states']
-            )
-        # With no realized yield shocks, the exact two-environment formulation
-        # already gives Clairvoyance perfect knowledge of the environment and
-        # of the known breeding outcome.
-        return None, grid['optimizer'].strat_hindsight()
+        return None, grid['optimizer'].strat_hindsight_full_information(
+            grid['clairvoyance_states']
+        )
 
     def _make_clairvoyance_states(self, seed, base_draws=32, condition_on_eta=False):
         """Antithetic Monte Carlo states paired over the two environment states.
@@ -715,13 +710,22 @@ class ExperimentRunner:
         environments with each shock vector gives the product distribution
         over environment and shocks with exact environment probabilities.
         """
+        asset_count = 2 if self.replace else 3
+        if self.sigma == 0 and (condition_on_eta or self.breeding_sd == 0):
+            eta = self.known_eta if condition_on_eta else np.zeros(2)
+            zero_eps = np.zeros(asset_count)
+            return [
+                {'env': env, 'prob': float(prob), 'eta': eta.tolist(),
+                 'eps': zero_eps.tolist()}
+                for env, prob in ((0, self.p), (1, 1.0 - self.p))
+            ]
+
         rng = np.random.default_rng(seed)
         try:
             root_g = np.linalg.cholesky(self.G)
         except np.linalg.LinAlgError:
             values, vectors = np.linalg.eigh(self.G)
             root_g = vectors @ np.diag(np.sqrt(np.clip(values, 0.0, None)))
-        asset_count = 2 if self.replace else 3
         states = []
         for _ in range(base_draws):
             z_eta = rng.standard_normal(2)
@@ -1090,19 +1094,12 @@ class ExperimentRunner:
 
                 U_fix = self.get_mean_yield(g_fixed)
                 Var_fix = self.get_variance(g_fixed)
-                if self.sigma > 0 or (
-                    stochastic_active and self.breeding_timing != 'known'
-                ):
-                    clairvoyance_states = self._make_clairvoyance_states(
-                        self.random_state + 1009 * id,
-                        # In known-timing runs, condition every outcome state
-                        # on this instance's revealed breeding result. Yield
-                        # shocks still vary across states and are observed by
-                        # Clairvoyance before it selects adoption and weights.
-                        condition_on_eta=(self.breeding_timing == 'known'),
-                    )
-                else:
-                    clairvoyance_states = None
+                clairvoyance_states = self._make_clairvoyance_states(
+                    self.random_state + 1009 * id,
+                    # In known-timing runs, condition every outcome state
+                    # on this instance's revealed breeding result.
+                    condition_on_eta=(self.breeding_timing == 'known'),
+                )
                 base_assets = [g_fixed] if self.replace else [g_fixed, g_mutable]
                 base_line = self._get_standard_output(base_assets)
                 if clairvoyance_states is not None:
@@ -1145,8 +1142,7 @@ class ExperimentRunner:
                     'breeding_timing': self.breeding_timing, 'breeding_sd': self.breeding_sd,
                     'known_eta': self.known_eta,
                 }
-                if stochastic_active:
-                    grid_dict['clairvoyance_states'] = clairvoyance_states
+                grid_dict['clairvoyance_states'] = clairvoyance_states
                 grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
                 grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
                 self.grid_dict = grid_dict

@@ -2,10 +2,10 @@
 
 The four known-timing conditions are deterministic, yield-noise only,
 breeding-outcome only, and both sources. Unknown breeding timing is omitted.
-Clairvoyance sees the environment, realized yield shocks, and known breeding
-outcome. Its ex-ante value is estimated on 128 common outcome states when
-yield noise is active. Results use a new directory so the prior analytic-risk
-Clairvoyance checkpoint remains available for comparison.
+Clairvoyance sees the environment, realized yield shocks, and breeding outcome,
+then chooses both its breeding target and portfolio separately in each state.
+Its ex-ante value is estimated on 128 common outcome states when yield noise
+is active. Results use a fresh directory so earlier model versions stay intact.
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ from experiment_core import ExperimentRunner
 
 
 ROOT = Path(__file__).resolve().parent
-OUTDIR = ROOT / "outputs" / "stochastic_paper_grid_god_mode_20261118"
+OUTDIR = ROOT / "outputs" / "stochastic_paper_grid_god_mode_statewise_20261118"
 RESULTS = OUTDIR / "results.csv"
 PROGRESS = OUTDIR / "progress.json"
 README = OUTDIR / "README.md"
-CLAIRVOYANCE_MODEL = "god_mode_known_eta_and_observed_yield_shocks_saa128_v1"
+CLAIRVOYANCE_MODEL = "god_mode_statewise_breeding_and_portfolio_saa128_v2"
 # The user authorized this follow-on grid to use all available logical cores.
 WORKERS = os.cpu_count() or 1
 N_INTERNAL = 401
@@ -282,8 +282,9 @@ def main() -> None:
         "known breeding outcome. With sigma>0, ex-ante value is approximated\n"
         "using 128 antithetic states. Ordinary strategies are scored on the same\n"
         "state sample but do not observe yield shocks when choosing weights.\n"
-        "The previous v2 checkpoint used analytic yield-risk Clairvoyance and\n"
-        "is preserved separately; this run starts fresh to avoid mixing models.\n",
+        "This version lets Clairvoyance choose a state-specific breeding target\n"
+        "and portfolio after observing all outcomes. Earlier checkpoints remain\n"
+        "separate and are not mixed with this run.\n",
         encoding="utf-8",
     )
     persisted = set()

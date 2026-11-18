@@ -1193,10 +1193,10 @@ class GurobiPortfolioOptimizer:
     def strat_hindsight_full_information(self, states):
         """Globally optimize a full-information policy over a finite state sample.
 
-        The target genotype is common across states and must lie in the breeding
-        ellipse. Each state has its own adoption weights after the environment,
-        variety yield shocks, and candidate breeding shock are observed. The
-        objective is the ex-ante mean-variance utility across all states.
+        Clairvoyance chooses a separate target genotype and adoption weights
+        in each state, after seeing the environment, variety yield shocks, and
+        candidate breeding shock. Every target must lie in the breeding
+        ellipse. The objective is ex-ante mean-variance utility across states.
 
         Gurobi's spatial branch-and-bound globally solves this nonconvex QCQP.
         A result is returned only at OPTIMAL status; callers must still interpret
@@ -1240,33 +1240,34 @@ class GurobiPortfolioOptimizer:
         G = np.linalg.inv(self.Ginv)
         dx = self.R * np.sqrt(max(float(G[0, 0]), 0.0))
         dy = self.R * np.sqrt(max(float(G[1, 1]), 0.0))
-        # The breeding target is selected before eta is realized in either
-        # timing mode. Constrain the target itself to the admissible genotype
-        # box and breeding ellipse; realized genotypes may lie outside the box
-        # under the additive shock specified by the stochastic model.
+        # Perfect information applies to the breeding decision too: create a
+        # state-specific target after Clairvoyance sees that state's shocks.
+        # Each target remains within the admissible genotype box and ellipse.
         tx_lb, tx_ub = max(-1.0, self.g_mutable[0] - dx), min(
             1.0, self.g_mutable[0] + dx
         )
         ty_lb, ty_ub = max(-1.0, self.g_mutable[1] - dy), min(
             1.0, self.g_mutable[1] + dy
         )
-        tx = m.addVar(lb=tx_lb, ub=tx_ub, name="target_x")
-        ty = m.addVar(lb=ty_lb, ub=ty_ub, name="target_y")
-        ux, uy = tx - self.g_mutable[0], ty - self.g_mutable[1]
-        m.addQConstr(
-            self.Ginv[0, 0] * ux * ux + 2 * self.Ginv[0, 1] * ux * uy
-            + self.Ginv[1, 1] * uy * uy <= self.R ** 2,
-            name="target_breeding_ellipse",
-        )
 
         scenario_returns = []
         scenario_probs = []
         weight_vars = []
+        target_vars = []
         for k, state in enumerate(states):
             env = int(state["env"])
             beta = (1.0, self.c) if env == 0 else (self.c, 1.0)
             eta = np.asarray(state["eta"], dtype=float)
             eps = np.asarray(state["eps"], dtype=float)
+            tx = m.addVar(lb=tx_lb, ub=tx_ub, name=f"target_x_{k}")
+            ty = m.addVar(lb=ty_lb, ub=ty_ub, name=f"target_y_{k}")
+            ux, uy = tx - self.g_mutable[0], ty - self.g_mutable[1]
+            m.addQConstr(
+                self.Ginv[0, 0] * ux * ux + 2 * self.Ginv[0, 1] * ux * uy
+                + self.Ginv[1, 1] * uy * uy <= self.R ** 2,
+                name=f"target_breeding_ellipse_{k}",
+            )
+            target_vars.append((tx, ty))
             wc = m.addVar(lb=0.0, ub=1.0, name=f"wc_{k}")
             wf = m.addVar(lb=0.0, ub=1.0, name=f"wf_{k}")
             wm = (m.addVar(lb=0.0, ub=1.0, name=f"wm_{k}")
@@ -1280,7 +1281,7 @@ class GurobiPortfolioOptimizer:
                 eps_f, eps_m, eps_c = eps[0], eps[1], eps[2]
                 parent_mutable = wm * (self.ym[env] + eps_m)
 
-            # z = wc * target. Since wc is in [0, 1], these bounds must
+            # z = wc * state-specific target. Since wc is in [0, 1], these bounds must
             # include every feasible target value (known shocks can shift
             # target coordinates outside the realized-genotype box).
             ztx = m.addVar(lb=min(0.0, tx_lb), ub=max(0.0, tx_ub),
@@ -1340,15 +1341,15 @@ class GurobiPortfolioOptimizer:
                        sum(prob * item[3].X for prob, item in zip(local_probabilities, selected))]
             env_weights[key] = avg
 
-        reported_target = np.array([tx.X, ty.X], dtype=float)
-        eta_values = np.asarray([state['eta'] for state in states], dtype=float)
-        if len(eta_values) and np.allclose(eta_values, eta_values[0], atol=1e-12, rtol=0.0):
-            # In known-timing runs the breeding outcome is fixed across the
-            # state sample, so report the realized candidate genotype. In
-            # unknown-timing runs, report the pre-outcome breeding target.
-            reported_candidate = reported_target + eta_values[0]
-        else:
-            reported_candidate = reported_target
+        state_targets = [np.array([tx.X, ty.X], dtype=float) for tx, ty in target_vars]
+        reported_target = np.average(
+            np.asarray(state_targets), axis=0, weights=np.asarray(scenario_probs)
+        )
+        state_candidates = [target + np.asarray(state['eta'], dtype=float)
+                            for target, state in zip(state_targets, states)]
+        reported_candidate = np.average(
+            np.asarray(state_candidates), axis=0, weights=np.asarray(scenario_probs)
+        )
         genotypes = ([self.g_fixed.tolist(), reported_candidate.tolist()] if self.replace else
                      [self.g_fixed.tolist(), self.g_mutable.tolist(), reported_candidate.tolist()])
         try:
@@ -1360,7 +1361,9 @@ class GurobiPortfolioOptimizer:
         except (AttributeError, gp.GurobiError):
             solver_gap = abs(solver_bound - float(m.ObjVal)) / max(1.0, abs(float(m.ObjVal)))
         full_information_policy = []
-        for state, ret, vars_for_state in zip(states, scenario_returns, weight_vars):
+        for state, target, candidate, ret, vars_for_state in zip(
+            states, state_targets, state_candidates, scenario_returns, weight_vars
+        ):
             env, wf, wm, wc = vars_for_state
             weights = ([float(wf.X), float(wc.X)] if self.replace else
                        [float(wf.X), float(wm.X), float(wc.X)])
@@ -1369,6 +1372,8 @@ class GurobiPortfolioOptimizer:
                 'prob': float(state['prob']),
                 'eta': np.asarray(state['eta']).astype(float).tolist(),
                 'eps': np.asarray(state['eps']).astype(float).tolist(),
+                'target_genotype': target.tolist(),
+                'candidate_genotype': candidate.tolist(),
                 'weights': weights,
                 'return': float(ret.X),
             })
@@ -1381,6 +1386,7 @@ class GurobiPortfolioOptimizer:
             "full_information": True,
             "state_count": len(states),
             "target": reported_target.tolist(),
+            "target_is_probability_weighted_summary": True,
             "full_information_policy": full_information_policy,
             "solver_certificate": {
                 'status': 'OPTIMAL',
