@@ -17,12 +17,14 @@ class GurobiPortfolioOptimizer:
         self.R = grid_params['R']
         self.Ginv = grid_params['Ginv']
         self.replace = grid_params['replace']
-
-        # Stochastic extension (see stochastic_core.py). Both are 0 in the deterministic model.
-        # sig2:   farm-level idiosyncratic yield variance, adds sig2 * sum_i w_i^2 to Var
-        # tau2_c: extra candidate variance when the breeding outcome is unknown at adoption
-        self.sig2 = float(grid_params.get('sigma2', 0.0))
-        self.tau2_c = float(grid_params.get('tau2_c', 0.0))
+        self.sigma2 = float(grid_params.get('sigma', 0.0)) ** 2
+        self.candidate_breeding_var = float(grid_params.get('candidate_breeding_var', 0.0))
+        self.known_eta = np.asarray(grid_params.get('known_eta', np.zeros(2)), dtype=float)
+        self.breeding_timing = grid_params.get('breeding_timing', 'unknown')
+        self.stochastic_active = bool(
+            self.sigma2 > 0 or self.candidate_breeding_var > 0
+            or grid_params.get('breeding_sd', 0.0) > 0
+        )
 
         # Helper: Fixed/Mutable Yield Vectors (Env 1, Env 2)
         # Yield formula: y1 = x + c*y; y2 = c*x + y
@@ -30,12 +32,6 @@ class GurobiPortfolioOptimizer:
         self.ym = self._get_yield_vec(self.g_mutable[0], self.g_mutable[1])
 
         self.POB_model = None
-
-    def _idio_var(self, wf, wm, wc):
-        """Idiosyncratic part of portfolio variance: sig2*(wf^2+wm^2+wc^2) + tau2_c*wc^2."""
-        if self.sig2 == 0 and self.tau2_c == 0:
-            return 0.0
-        return self.sig2 * (wf * wf + wm * wm + wc * wc) + self.tau2_c * (wc * wc)
 
     def _get_yield_vec(self, x, y):
         """Returns array [y_env1, y_env2]"""
@@ -46,8 +42,8 @@ class GurobiPortfolioOptimizer:
         # Center points (u = g - g_mutable)
         # Note: Mahalanobis is usually around the original population mean or mutable point
         # Assuming g_mutable is the center for the ellipse as per your snippet
-        cx = self.g_mutable[0]
-        cy = self.g_mutable[1]
+        cx = self.g_mutable[0] + self.known_eta[0]
+        cy = self.g_mutable[1] + self.known_eta[1]
 
         u1 = x - cx
         u2 = y - cy
@@ -74,6 +70,7 @@ class GurobiPortfolioOptimizer:
         m = gp.Model("B4P")
         m.setParam("OutputFlag", 0)
         m.setParam("NonConvex", 2)
+        m.setParam("MIPGap", 1e-4)
         m.setParam("TimeLimit", 60)
 
         # --- 1. Explicit Bounds Calculation (CRITICAL FIX) ---
@@ -127,7 +124,8 @@ class GurobiPortfolioOptimizer:
         mu_p = self.p * Yp1 + (1 - self.p) * Yp2
         E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
 
-        obj = mu_p - 0.5 * self.gamma * (E_Yp2 - mu_p * mu_p + self._idio_var(wf, wm, wc))
+        noise_var = self.sigma2 * (wf * wf + wc * wc + wm * wm) + self.candidate_breeding_var * wc * wc
+        obj = mu_p - 0.5 * self.gamma * (E_Yp2 - mu_p * mu_p + noise_var)
         m.setObjective(obj, GRB.MAXIMIZE)
 
         # --- 5. Optimize ---
@@ -184,7 +182,8 @@ class GurobiPortfolioOptimizer:
         E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
 
         # Apply the new objective
-        obj = mu_p - 0.5 * gamma * (E_Yp2 - mu_p * mu_p + self._idio_var(wf, wm, wc))
+        noise_var = self.sigma2 * (wf * wf + wc * wc + wm * wm) + self.candidate_breeding_var * wc * wc
+        obj = mu_p - 0.5 * gamma * (E_Yp2 - mu_p * mu_p + noise_var)
         m.setObjective(obj, GRB.MAXIMIZE)
 
         # 4. Re-optimize
@@ -321,7 +320,7 @@ class GurobiPortfolioOptimizer:
         E_R_yf = self.p * R1 * self.yf[0] + (1 - self.p) * R2 * self.yf[1]
         # Linear constraint (since yf is const)
         m.addConstr(
-            scale_factor * mu_f - (E_R_yf - mu_p * mu_f) - self.sig2 * wf == lam_s - eta_f_s,
+            scale_factor * mu_f - (E_R_yf - mu_p * mu_f) == lam_s - eta_f_s,
             name="KKT_Stat_F"
         )
 
@@ -330,15 +329,14 @@ class GurobiPortfolioOptimizer:
             mu_m = self.p * self.ym[0] + (1 - self.p) * self.ym[1]
             E_R_ym = self.p * R1 * self.ym[0] + (1 - self.p) * R2 * self.ym[1]
             m.addConstr(
-                scale_factor * mu_m - (E_R_ym - mu_p * mu_m) - self.sig2 * wm == lam_s - eta_m_s,
+                scale_factor * mu_m - (E_R_ym - mu_p * mu_m) == lam_s - eta_m_s,
                 name="KKT_Stat_M"
             )
 
         # -- Candidate Variety C --
         # Quadratic constraint (mu_p * mu_c term)
         m.addQConstr(
-            scale_factor * mu_c - (E_R_yc - mu_p * mu_c) - (self.sig2 + self.tau2_c) * wc
-            == lam_s - eta_c_s,
+            scale_factor * mu_c - (E_R_yc - mu_p * mu_c) == lam_s - eta_c_s,
             name="KKT_Stat_C"
         )
 
@@ -376,12 +374,19 @@ class GurobiPortfolioOptimizer:
             g_opt = np.array([gx.X, gy.X])
             w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
             return self._build_result(g_opt, w_opt)
-        elif m.Status == GRB.TIME_LIMIT:
+        elif m.Status == GRB.TIME_LIMIT and not self.stochastic_active:
             m.write('hard_invest.lp')
             print("couldn't solve strat_max_investability_old, try strat_max_investability_old with warmstart")
             return self.strat_max_investability_old(self.strat_max_share(steps=100))
 
-        elif m.Status == GRB.INFEASIBLE:
+        if self.stochastic_active and m.Status != GRB.OPTIMAL:
+            raise RuntimeError(
+                "MaxMarket could not certify an optimal stochastic solution; "
+                "the legacy fallback is disabled for stochastic settings "
+                f"(Gurobi status {m.Status}, solution_count {m.SolCount}, "
+                f"gap {m.MIPGap if m.SolCount else 'unavailable'})."
+            )
+        if m.Status == GRB.INFEASIBLE:
             print("\n!!! Model is INFEASIBLE. Calculating IIS... !!!")
             m.computeIIS()
             m.write("model_iis.ilp")
@@ -402,18 +407,44 @@ class GurobiPortfolioOptimizer:
 
         # --- STEP 0: Solve Benchmark (Parents Only) & Prepare Fallback ---
         # We need the full details of the benchmark to use as a fallback.
-        bench_util_low, _, _ = self._solve_parent_benchmark()
-        bench_util_up = self.strat_B4P()["mean_variance"]
-
-        if abs(bench_util_up - bench_util_low) < 1e-5:
-            #print('Max-share = 0')
-            return self.strat_B4P()
+        bench_util_low, bench_weights, _ = self._solve_parent_benchmark()
 
         # If we can't improve by at least epsilon, the solver will be infeasible.
         if bench_util_low > 0:
             target_utility = bench_util_low * (1 + min_improvement)
         else:
             target_utility = bench_util_low * (1 - min_improvement)
+
+        best_portfolio = self.strat_B4P()
+        if best_portfolio is None:
+            raise RuntimeError("Could not certify the best-utility portfolio for MaxMarket.")
+        best_utility = float(best_portfolio["mean_variance"])
+        # If even the globally best-utility portfolio cannot reach the
+        # improvement threshold, the only meaningful MaxMarket result is the
+        # parent benchmark with zero candidate share. Returning the best-utility
+        # portfolio here can incorrectly assign a positive candidate share.
+        if best_utility < target_utility - 1e-8:
+            candidate = self.g_mutable + self.known_eta
+            status_quo = self._build_result(
+                candidate,
+                {
+                    "wf": bench_weights["wf"],
+                    "wm": bench_weights["wm"],
+                    "wc": 0.0,
+                },
+            )
+            status_quo["solver_certificate"] = {
+                "status": "OPTIMAL_STATUS_QUO",
+                "objective_value": 0.0,
+                "objective_bound": 0.0,
+                "relative_gap": 0.0,
+                "requested_relative_gap": 1e-4,
+                "baseline_utility": float(bench_util_low),
+                "best_achievable_utility": best_utility,
+                "required_utility": float(target_utility),
+                "scope": "no candidate portfolio reaches the required utility threshold",
+            }
+            return status_quo
 
         m = gp.Model("Max_Investability_Robust")
         
@@ -422,6 +453,7 @@ class GurobiPortfolioOptimizer:
         m.setParam("NonConvex", 2)
         m.setParam("MIPFocus", 3)
         m.setParam("NumericFocus", 1)
+        m.setParam("MIPGap", 1e-4)
         #m.setParam("TimeLimit", 120)
 
         # ... (Define Variables & Constraints exactly as before) ...
@@ -485,19 +517,24 @@ class GurobiPortfolioOptimizer:
         m.addQConstr(E_R_yc == self.p * (R1 * yc1) + (1 - self.p) * (R2 * yc2))
         
         # NEW: Second Moment of Returns definition
-        m.addQConstr(E_R2 == self.p * (R1 * R1) + (1 - self.p) * (R2 * R2))
+        m.addQConstr(E_R2 == self.p * (R1 * R1) + (1 - self.p) * (R2 * R2)
+                     + self.sigma2 * (wf * wf + wm * wm + wc * wc)
+                     + self.candidate_breeding_var * wc * wc)
 
         # KKT Stationarity (Scaled)
         mu_f = self.p * self.yf[0] + (1 - self.p) * self.yf[1]
         E_R_yf = self.p * R1 * self.yf[0] + (1 - self.p) * R2 * self.yf[1]
-        m.addConstr(scale_factor * mu_f - (E_R_yf - mu_p * mu_f) - self.sig2 * wf == lam_s - eta_f_s)
+        m.addConstr(scale_factor * mu_f - (E_R_yf - mu_p * mu_f) - self.sigma2 * wf
+                    == lam_s - eta_f_s)
 
         if not self.replace:
             mu_m = self.p * self.ym[0] + (1 - self.p) * self.ym[1]
             E_R_ym = self.p * R1 * self.ym[0] + (1 - self.p) * R2 * self.ym[1]
-            m.addConstr(scale_factor * mu_m - (E_R_ym - mu_p * mu_m) - self.sig2 * wm == lam_s - eta_m_s)
+            m.addConstr(scale_factor * mu_m - (E_R_ym - mu_p * mu_m) - self.sigma2 * wm
+                        == lam_s - eta_m_s)
 
-        m.addQConstr(scale_factor * mu_c - (E_R_yc - mu_p * mu_c) - (self.sig2 + self.tau2_c) * wc
+        m.addQConstr(scale_factor * mu_c - (E_R_yc - mu_p * mu_c)
+                     - (self.sigma2 + self.candidate_breeding_var) * wc
                      == lam_s - eta_c_s)
 
         m.addSOS(GRB.SOS_TYPE1, [wf, eta_f_s])
@@ -515,7 +552,7 @@ class GurobiPortfolioOptimizer:
         
         # Note: Gurobi's Python interface allows direct quadratic expressions in addQConstr
         utility_constraint = m.addQConstr(
-            mu_p - 0.5 * self.gamma * (E_R2 - mu_p * mu_p + self._idio_var(wf, wm, wc)) >= target_utility,
+            mu_p - 0.5 * self.gamma * (E_R2 - mu_p * mu_p) >= target_utility,
             name="Strict_Improvement"
         )
 
@@ -549,8 +586,24 @@ class GurobiPortfolioOptimizer:
         if m.Status == GRB.OPTIMAL:
             g_opt = np.array([gx.X, gy.X])
             w_opt = {'wf': wf.X, 'wc': wc.X, 'wm': wm.X if not self.replace else 0.0}
-            return self._build_result(g_opt, w_opt)
-        elif m.Status == GRB.INFEASIBLE:
+            result = self._build_result(g_opt, w_opt)
+            result["solver_certificate"] = {
+                "status": "OPTIMAL",
+                "objective_value": float(wc.X),
+                "objective_bound": float(m.ObjBound),
+                "relative_gap": float(m.MIPGap),
+                "requested_relative_gap": float(m.Params.MIPGap),
+                "scope": "global optimum of the bounded KKT reformulation",
+            }
+            return result
+        if self.stochastic_active:
+            raise RuntimeError(
+                "MaxMarket could not certify an optimal stochastic solution; "
+                "the legacy fallback is disabled for stochastic settings "
+                f"(Gurobi status {m.Status}, solution_count {m.SolCount}, "
+                f"gap {m.MIPGap if m.SolCount else 'unavailable'})."
+            )
+        if m.Status == GRB.INFEASIBLE:
             m.remove(utility_constraint)
             print('removed utility constraint')
             m.optimize()
@@ -603,7 +656,8 @@ class GurobiPortfolioOptimizer:
         # E[R^2] = wf^2*E_f2 + wm^2*E_m2 + 2*wf*wm*E_fm
         
         port_mean = wf * mu_f + wm * mu_m
-        port_E_R2 = (wf*wf * E_f2) + (wm*wm * E_m2) + (2 * wf * wm * E_fm)
+        port_E_R2 = ((wf*wf * E_f2) + (wm*wm * E_m2) + (2 * wf * wm * E_fm)
+                     + self.sigma2 * (wf * wf + wm * wm))
         
         # Var = E[R^2] - Mean^2
         # Obj = Mean - 0.5 * gamma * Var
@@ -613,8 +667,7 @@ class GurobiPortfolioOptimizer:
         # Gurobi allows quadratic objectives. 
         # Note: port_mean is linear, port_E_R2 is quadratic. port_mean^2 is quadratic.
         
-        obj = port_mean - 0.5 * self.gamma * (port_E_R2 - port_mean * port_mean
-                                              + self.sig2 * (wf * wf + wm * wm))
+        obj = port_mean - 0.5 * self.gamma * (port_E_R2 - port_mean * port_mean)
         
         m.setObjective(obj, GRB.MAXIMIZE)
         m.optimize()
@@ -625,7 +678,7 @@ class GurobiPortfolioOptimizer:
             w_m_val = wm.X
             final_mean = w_f_val * mu_f + w_m_val * mu_m
             final_E2 = (w_f_val**2 * E_f2) + (w_m_val**2 * E_m2) + (2 * w_f_val * w_m_val * E_fm)
-            final_var = final_E2 - final_mean**2 + self.sig2 * (w_f_val**2 + w_m_val**2)
+            final_var = final_E2 - final_mean**2 + self.sigma2 * (w_f_val**2 + w_m_val**2)
             
             return (
                 m.ObjVal, 
@@ -636,9 +689,12 @@ class GurobiPortfolioOptimizer:
             # Should not happen for a simple QP, but safe fallback:
             # Return all-in on F
             mu_f_val = mu_f
-            var_f_val = E_f2 - mu_f**2 + self.sig2
+            var_f_val = E_f2 - mu_f**2 + self.sigma2
             util = mu_f_val - 0.5 * self.gamma * var_f_val
-            return (util, {'wf': 1.0, 'wm': 0.0}, {'mean': mu_f_val, 'var': var_f_val})
+            raise RuntimeError(
+                "Parent benchmark failed to certify an optimum "
+                f"(Gurobi status {m.Status}, solution_count {m.SolCount})."
+            )
 
     def _get_benchmark_utility(self):
         """
@@ -675,12 +731,12 @@ class GurobiPortfolioOptimizer:
             E_xy = self.p * y1[0]*y2[0] + (1-self.p)*y1[1]*y2[1]
             return E_xy - m1*m2
             
-        var_f = get_cov(self.yf, mu_f, self.yf, mu_f)
-        var_m = get_cov(self.ym, mu_m, self.ym, mu_m)
+        var_f = get_cov(self.yf, mu_f, self.yf, mu_f) + self.sigma2
+        var_m = get_cov(self.ym, mu_m, self.ym, mu_m) + self.sigma2
         cov_fm = get_cov(self.yf, mu_f, self.ym, mu_m)
         
         port_mean = wf * mu_f + wm * mu_m
-        port_var = wf*wf*var_f + wm*wm*var_m + 2*wf*wm*cov_fm + self.sig2 * (wf*wf + wm*wm)
+        port_var = wf*wf*var_f + wm*wm*var_m + 2*wf*wm*cov_fm
         
         obj = port_mean - 0.5 * self.gamma * port_var
         m.setObjective(obj, GRB.MAXIMIZE)
@@ -690,8 +746,13 @@ class GurobiPortfolioOptimizer:
 
     def strat_max_share(self, tolerance=1e-5, steps=15):
         """
-        Fast Rigorous Max Share with Numerical Safeguards.
+        Binary-search Max Share approximation; not a global optimum certificate.
         """
+        if self.stochastic_active:
+            raise RuntimeError(
+                "strat_max_share is an approximate binary-search route and has not been "
+                "updated for stochastic variance terms. Use the MaxMarket MPEC route instead."
+            )
         # --- 1. Constants & Bounds ---
         (xb_min, xb_max), (yb_min, yb_max) = self._get_ellipse_bounds()
         yf, ym = self.yf, self.ym
@@ -941,8 +1002,9 @@ class GurobiPortfolioOptimizer:
 
         # Portfolio Stats
         port_mean = np.dot(w_vec, y_bar)
+        Sigma += np.eye(len(w_vec)) * self.sigma2
+        Sigma[-1, -1] += self.candidate_breeding_var
         port_var = w_vec.T @ Sigma @ w_vec
-        port_var += self.sig2 * float(w_vec @ w_vec) + self.tau2_c * w_vec[-1] ** 2
         obj_val = port_mean - 0.5 * self.gamma * port_var
 
         # 4. Return Dictionary
@@ -968,6 +1030,7 @@ class GurobiPortfolioOptimizer:
         m = gp.Model("Hindsight_StateContingent")
         m.setParam("OutputFlag", 0)
         m.setParam("NonConvex", 2)
+        m.setParam("MIPGap", 1e-4)
         m.setParam("TimeLimit", 60)
 
         # --- 1. Bounds & Genotype Variables ---
@@ -1037,17 +1100,37 @@ class GurobiPortfolioOptimizer:
         Yp2 = term_f_env2 + term_m_env2 + term_c_env2
 
         # --- 5. Objective: Utility of the Portfolio ---
-        # Mean = p * Yp1 + (1-p) * Yp2
+        # Yield noise is a variance penalty, not a shock the farmer observes.
+        # Environment-contingent weights may respond to the environment, while
+        # independent yield noise remains unobserved and contributes sigma^2
+        # times the squared portfolio weights to conditional variance.
         mu_p = self.p * Yp1 + (1 - self.p) * Yp2
 
-        # Second Moment = p * Yp1^2 + (1-p) * Yp2^2
+        # Second moment across environments plus conditional yield-risk variance.
         E_Yp2 = self.p * (Yp1 * Yp1) + (1 - self.p) * (Yp2 * Yp2)
-
-        # Utility
-        obj = mu_p - 0.5 * self.gamma * (E_Yp2 - mu_p * mu_p)
+        yield_risk = self.sigma2 * (
+            self.p * (wf1 * wf1 + wm1 * wm1 + wc1 * wc1)
+            + (1 - self.p) * (wf2 * wf2 + wm2 * wm2 + wc2 * wc2)
+        )
+        breeding_risk = self.candidate_breeding_var * (
+            self.p * wc1 * wc1 + (1 - self.p) * wc2 * wc2
+        )
+        obj = mu_p - 0.5 * self.gamma * (
+            E_Yp2 - mu_p * mu_p + yield_risk + breeding_risk
+        )
 
         m.setObjective(obj, GRB.MAXIMIZE)
         m.optimize()
+
+        # Retry timed-out solves and evaluate the retry status below. The old
+        # flow discarded a successful 180-second retry and raised regardless.
+        if m.Status == GRB.TIME_LIMIT:
+            print('Struggling with start_hindsight; retrying with 180 seconds')
+            m.setParam("OutputFlag", 0)
+            m.setParam("NonConvex", 2)
+            m.setParam("MIPGap", 1e-4)
+            m.setParam("TimeLimit", 180)
+            m.optimize()
 
         # --- 6. Format Output ---
         if m.Status == GRB.OPTIMAL:
@@ -1064,7 +1147,17 @@ class GurobiPortfolioOptimizer:
             val_Yp2 = Yp2.getValue()
 
             final_mean = self.p * val_Yp1 + (1 - self.p) * val_Yp2
-            final_var = self.p * (val_Yp1 ** 2) + (1 - self.p) * (val_Yp2 ** 2) - final_mean ** 2
+            final_var = (
+                self.p * (val_Yp1 ** 2) + (1 - self.p) * (val_Yp2 ** 2)
+                - final_mean ** 2
+                + self.sigma2 * (
+                    self.p * (wf1.X ** 2 + wm1.X ** 2 + wc1.X ** 2)
+                    + (1 - self.p) * (wf2.X ** 2 + wm2.X ** 2 + wc2.X ** 2)
+                )
+                + self.candidate_breeding_var * (
+                    self.p * wc1.X ** 2 + (1 - self.p) * wc2.X ** 2
+                )
+            )
             final_obj = final_mean - 0.5 * self.gamma * final_var
 
             # Genotype list for output
@@ -1081,16 +1174,216 @@ class GurobiPortfolioOptimizer:
                 },
                 "mean_variance": float(final_obj),
                 "mean": float(final_mean),
-                "variance": float(final_var)
+                "variance": float(final_var),
+                "solver_certificate": {
+                    "status": "OPTIMAL",
+                    "objective_value": float(m.ObjVal),
+                    "objective_bound": float(m.ObjBound),
+                    "relative_gap": float(m.MIPGap),
+                    "requested_relative_gap": float(m.Params.MIPGap),
+                    "scope": "global optimum for the known breeding outcome and analytic yield-risk variance",
+                },
             }
-        elif m.Status == GRB.TIME_LIMIT:
-            print('Struggling with start_hindsight')
-            m.setParam("OutputFlag", 0)
-            m.setParam("NonConvex", 2)
-            m.setParam("TimeLimit", 180)
-            m.optimize()
+        raise RuntimeError(
+            "Clairvoyance did not certify a global optimum for the known-outcome "
+            f"model (Gurobi status {m.Status}, solution_count {m.SolCount}, "
+            f"gap {m.MIPGap if m.SolCount else 'unavailable'})."
+        )
 
-        return None
+    def strat_hindsight_full_information(self, states):
+        """Globally optimize a full-information policy over a finite state sample.
+
+        The target genotype is common across states and must lie in the breeding
+        ellipse. Each state has its own adoption weights after the environment,
+        variety yield shocks, and candidate breeding shock are observed. The
+        objective is the ex-ante mean-variance utility across all states.
+
+        Gurobi's spatial branch-and-bound globally solves this nonconvex QCQP.
+        A result is returned only at OPTIMAL status; callers must still interpret
+        it as optimal for the supplied finite Monte Carlo approximation.
+        """
+        if not states:
+            raise ValueError("Full-information Clairvoyance needs at least one state.")
+        expected_assets = 2 if self.replace else 3
+        probabilities = []
+        checked_states = []
+        for k, state in enumerate(states):
+            try:
+                env = int(state['env'])
+                prob = float(state['prob'])
+                eta = np.asarray(state['eta'], dtype=float)
+                eps = np.asarray(state['eps'], dtype=float)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"Malformed full-information state at index {k}.") from exc
+            if env not in (0, 1):
+                raise ValueError(f"State {k} has environment {env}; expected 0 or 1.")
+            if not np.isfinite(prob) or prob < 0:
+                raise ValueError(f"State {k} probability must be finite and nonnegative.")
+            if eta.shape != (2,) or not np.all(np.isfinite(eta)):
+                raise ValueError(f"State {k} eta must contain two finite values.")
+            if eps.shape != (expected_assets,) or not np.all(np.isfinite(eps)):
+                raise ValueError(
+                    f"State {k} eps must contain {expected_assets} finite variety shocks."
+                )
+            probabilities.append(prob)
+            checked_states.append({'env': env, 'prob': prob, 'eta': eta, 'eps': eps})
+        if not np.isclose(sum(probabilities), 1.0, atol=1e-9, rtol=0.0):
+            raise ValueError("Full-information state probabilities must sum to one.")
+        states = checked_states
+
+        m = gp.Model("Clairvoyance_FullInformation_SAA")
+        m.Params.OutputFlag = 0
+        m.Params.NonConvex = 2
+        m.Params.MIPGap = 1e-4
+        m.Params.TimeLimit = 600
+
+        G = np.linalg.inv(self.Ginv)
+        dx = self.R * np.sqrt(max(float(G[0, 0]), 0.0))
+        dy = self.R * np.sqrt(max(float(G[1, 1]), 0.0))
+        # The breeding target is selected before eta is realized in either
+        # timing mode. Constrain the target itself to the admissible genotype
+        # box and breeding ellipse; realized genotypes may lie outside the box
+        # under the additive shock specified by the stochastic model.
+        tx_lb, tx_ub = max(-1.0, self.g_mutable[0] - dx), min(
+            1.0, self.g_mutable[0] + dx
+        )
+        ty_lb, ty_ub = max(-1.0, self.g_mutable[1] - dy), min(
+            1.0, self.g_mutable[1] + dy
+        )
+        tx = m.addVar(lb=tx_lb, ub=tx_ub, name="target_x")
+        ty = m.addVar(lb=ty_lb, ub=ty_ub, name="target_y")
+        ux, uy = tx - self.g_mutable[0], ty - self.g_mutable[1]
+        m.addQConstr(
+            self.Ginv[0, 0] * ux * ux + 2 * self.Ginv[0, 1] * ux * uy
+            + self.Ginv[1, 1] * uy * uy <= self.R ** 2,
+            name="target_breeding_ellipse",
+        )
+
+        scenario_returns = []
+        scenario_probs = []
+        weight_vars = []
+        for k, state in enumerate(states):
+            env = int(state["env"])
+            beta = (1.0, self.c) if env == 0 else (self.c, 1.0)
+            eta = np.asarray(state["eta"], dtype=float)
+            eps = np.asarray(state["eps"], dtype=float)
+            wc = m.addVar(lb=0.0, ub=1.0, name=f"wc_{k}")
+            wf = m.addVar(lb=0.0, ub=1.0, name=f"wf_{k}")
+            wm = (m.addVar(lb=0.0, ub=1.0, name=f"wm_{k}")
+                  if not self.replace else None)
+            if self.replace:
+                m.addConstr(wf + wc == 1.0, name=f"budget_{k}")
+                eps_f, eps_c = eps[0], eps[1]
+                parent_mutable = 0.0
+            else:
+                m.addConstr(wf + wm + wc == 1.0, name=f"budget_{k}")
+                eps_f, eps_m, eps_c = eps[0], eps[1], eps[2]
+                parent_mutable = wm * (self.ym[env] + eps_m)
+
+            # z = wc * target. Since wc is in [0, 1], these bounds must
+            # include every feasible target value (known shocks can shift
+            # target coordinates outside the realized-genotype box).
+            ztx = m.addVar(lb=min(0.0, tx_lb), ub=max(0.0, tx_ub),
+                           name=f"wc_target_x_{k}")
+            zty = m.addVar(lb=min(0.0, ty_lb), ub=max(0.0, ty_ub),
+                           name=f"wc_target_y_{k}")
+            m.addQConstr(ztx == wc * tx, name=f"candidate_product_x_{k}")
+            m.addQConstr(zty == wc * ty, name=f"candidate_product_y_{k}")
+
+            candidate_const = beta[0] * eta[0] + beta[1] * eta[1] + eps_c
+            ret_expr = (
+                wf * (self.yf[env] + eps_f)
+                + parent_mutable
+                + wc * candidate_const
+                + beta[0] * ztx + beta[1] * zty
+            )
+            ret = m.addVar(lb=-GRB.INFINITY, ub=GRB.INFINITY, name=f"return_{k}")
+            m.addConstr(ret == ret_expr, name=f"return_definition_{k}")
+            scenario_returns.append(ret)
+            scenario_probs.append(float(state["prob"]))
+            weight_vars.append((env, wf, wm, wc))
+
+        mu = gp.quicksum(prob * ret for prob, ret in zip(scenario_probs, scenario_returns))
+        second_moment = gp.quicksum(
+            prob * ret * ret for prob, ret in zip(scenario_probs, scenario_returns)
+        )
+        variance = second_moment - mu * mu
+        m.setObjective(mu - 0.5 * self.gamma * variance, GRB.MAXIMIZE)
+        m.optimize()
+
+        if m.Status != GRB.OPTIMAL:
+            raise RuntimeError(
+                "Full-information Clairvoyance did not certify a global optimum "
+                f"within the requested relative gap (Gurobi status {m.Status}, "
+                f"solution_count {m.SolCount}, "
+                f"gap {m.MIPGap if m.SolCount else 'unavailable'})."
+            )
+
+        probs = np.asarray(scenario_probs, dtype=float)
+        returns = np.asarray([ret.X for ret in scenario_returns], dtype=float)
+        mean = float(np.dot(probs, returns))
+        var = float(np.dot(probs, (returns - mean) ** 2))
+        env_weights = {}
+        for env, key in ((0, "env_1"), (1, "env_2")):
+            selected = [item for item in weight_vars if item[0] == env]
+            env_mass = sum(s['prob'] for s in states if s['env'] == env)
+            if env_mass > 0:
+                local_probabilities = [s['prob'] / env_mass for s in states if s['env'] == env]
+            else:
+                local_probabilities = [1.0 / len(selected)] * len(selected) if selected else []
+            if self.replace:
+                avg = [sum(prob * item[1].X for prob, item in zip(local_probabilities, selected)),
+                       sum(prob * item[3].X for prob, item in zip(local_probabilities, selected))]
+            else:
+                avg = [sum(prob * item[1].X for prob, item in zip(local_probabilities, selected)),
+                       sum(prob * item[2].X for prob, item in zip(local_probabilities, selected)),
+                       sum(prob * item[3].X for prob, item in zip(local_probabilities, selected))]
+            env_weights[key] = avg
+
+        reported_candidate = np.array([tx.X, ty.X], dtype=float)
+        genotypes = ([self.g_fixed.tolist(), reported_candidate.tolist()] if self.replace else
+                     [self.g_fixed.tolist(), self.g_mutable.tolist(), reported_candidate.tolist()])
+        try:
+            solver_bound = float(m.ObjBound)
+        except (AttributeError, gp.GurobiError):
+            solver_bound = float(m.ObjVal)
+        try:
+            solver_gap = float(m.MIPGap)
+        except (AttributeError, gp.GurobiError):
+            solver_gap = abs(solver_bound - float(m.ObjVal)) / max(1.0, abs(float(m.ObjVal)))
+        full_information_policy = []
+        for state, ret, vars_for_state in zip(states, scenario_returns, weight_vars):
+            env, wf, wm, wc = vars_for_state
+            weights = ([float(wf.X), float(wc.X)] if self.replace else
+                       [float(wf.X), float(wm.X), float(wc.X)])
+            full_information_policy.append({
+                'env': int(state['env']),
+                'prob': float(state['prob']),
+                'eta': np.asarray(state['eta']).astype(float).tolist(),
+                'eps': np.asarray(state['eps']).astype(float).tolist(),
+                'weights': weights,
+                'return': float(ret.X),
+            })
+        return {
+            "genotypes": genotypes,
+            "weights": env_weights,
+            "mean_variance": float(mean - 0.5 * self.gamma * var),
+            "mean": mean,
+            "variance": var,
+            "full_information": True,
+            "state_count": len(states),
+            "target": [float(tx.X), float(ty.X)],
+            "full_information_policy": full_information_policy,
+            "solver_certificate": {
+                'status': 'OPTIMAL',
+                'objective_value': float(m.ObjVal),
+                'objective_bound': solver_bound,
+                'relative_gap': solver_gap,
+                'absolute_bound_difference': abs(solver_bound - float(m.ObjVal)),
+                'requested_relative_gap': float(m.Params.MIPGap),
+                'scope': 'within requested relative gap for the supplied finite outcome sample',
+            },
+        }
 
     def _get_ellipse_bounds(self):
         """
@@ -1111,8 +1404,8 @@ class GurobiPortfolioOptimizer:
         dy = self.R * np.sqrt(G[1, 1])
 
         # 3. Center point (g_mutable or g_fixed)
-        cx = self.g_mutable[0] 
-        cy = self.g_mutable[1]
+        cx = self.g_mutable[0] + self.known_eta[0]
+        cy = self.g_mutable[1] + self.known_eta[1]
 
         # 4. Return explicit bounds
         x_bounds = (cx - dx, cx + dx)

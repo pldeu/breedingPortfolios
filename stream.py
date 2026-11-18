@@ -69,6 +69,22 @@ with st.sidebar:
     gamma = st.slider("Gamma", 0.0, 1000.0, 20.0, 1.0, key="gamma_var")
     rg = st.slider("Gen Corr (r_g)", -1.0, 1.0, -0.7, 0.05, key="rg_var")
     R = st.slider("R", 0.0, 1.0, 0.1, 0.1, key="R_var")
+    st.markdown("**Stochastic model**")
+    sigma = st.slider(
+        "Yield noise SD (σ)", 0.0, 0.5, 0.0, 0.01,
+        help="Independent variety-specific yield noise; variance contribution is σ² Σwᵢ²."
+    )
+    breeding_sd = st.slider(
+        "Breeding outcome SD (s)", 0.0, 0.25, 0.0, 0.005,
+        help="Candidate genotype deviation: η ~ N(0, s²G)."
+    )
+    breeding_timing = "known"
+    st.markdown("**Breeding outcome timing**")
+    st.caption(
+        "Known after breeding and before adoption. The ordinary strategies use one "
+        "reproducible outcome draw (seed 42); this is a conditional scenario, not an "
+        "average over breeding outcomes."
+    )
 
     st.markdown("---")
 
@@ -86,6 +102,7 @@ with st.sidebar:
     # -- Strategy Selection --
     st.subheader("Strategy Selection")
     all_strategy_labels = {v["label"]: k for k, v in STRATEGY_REGISTRY.items()}
+    stochastic_active = sigma > 0 or breeding_sd > 0
     default_labels = [STRATEGY_REGISTRY[k]["label"] for k in DEFAULT_STRATEGY_KEYS
                       if k in STRATEGY_REGISTRY]
     selected_strategy_labels = st.multiselect(
@@ -94,6 +111,15 @@ with st.sidebar:
         default=default_labels,
     )
     selected_strategy_keys = [all_strategy_labels[l] for l in selected_strategy_labels]
+
+    if stochastic_active:
+        st.caption(
+            "Clairvoyance observes the environment, all variety yield shocks, and the candidate "
+            "breeding outcome before choosing adoption and weights. It jointly optimizes the "
+            "mean-variance objective over 128 antithetic Monte Carlo outcome states. Gurobi "
+            "must certify the global optimum of this finite-sample approximation; the continuous "
+            "outcome distribution is represented by those sampled states."
+        )
 
     # -- Subplot Selection --
     st.subheader("Subplot Selection")
@@ -110,19 +136,6 @@ with st.sidebar:
     # -- Simulation Options --
     st.subheader("Simulation Options")
     replace = st.toggle("Replace", value=False)
-
-    # -- Stochastic model (farm-level risk, see stochastic_core.py) --
-    st.subheader("Stochastic Model (farm level)")
-    sigma_farm = st.slider("Farm-level yield noise (sigma)", 0.0, 0.5, 0.0, 0.01, key="sigma_var",
-                           help="Variety-specific yield shock on the farm (variety x farm x year). "
-                                "0 with breeding sd 0 gives the deterministic model.")
-    breeding_sd = st.slider("Breeding outcome sd (s)", 0.0, 0.5, 0.0, 0.01, key="breed_sd_var",
-                            help="Realized candidate = target + eta, eta ~ N(0, s^2 G).")
-    timing = st.radio("Breeding outcome at adoption", ["known", "unknown"], horizontal=True,
-                      key="timing_var",
-                      help="known: farms observe the realized variety before choosing shares. "
-                           "unknown: farms adopt on the target and bear the outcome risk.")
-    stochastic_spec = dict(sigma=sigma_farm, breeding_sd=breeding_sd, timing=timing)
 
     # -- Visualization Options --
     st.subheader("Visualization")
@@ -157,12 +170,35 @@ with st.spinner("Simulating…"):
             scenario_pairs=scenario_pairs,
             replace=replace,
             n=401,
-            stochastic=stochastic_spec,
+            sigma=sigma,
+            breeding_sd=breeding_sd,
+            breeding_timing=breeding_timing,
+            random_state=42,
         )
+
+        if stochastic_active:
+            timing_note = (
+                f" Known outcome draw (seed 42): η = ({runner.known_eta[0]:.4f}, "
+                f"{runner.known_eta[1]:.4f}); this is one conditional realization, not an "
+                "expectation over η."
+                if breeding_timing == "known" and breeding_sd > 0 else ""
+            )
+            st.info(
+                "Stochastic run: PoB/BeatBest include σ² portfolio variance. The ordinary "
+                "strategies use one seeded η realization; Clairvoyance instead observes and optimizes across the "
+                "outcome-state sample." + timing_note
+            )
+            if breeding_timing == "known" and breeding_sd > 0:
+                st.warning(
+                    "Known-shock ordinary strategies are conditional on the single seeded eta "
+                    "draw. Their normalized gains versus unconditional Clairvoyance are "
+                    "suppressed; do not compare their raw gains directly with Clairvoyance."
+                )
 
         text_result, scenario_data_list = runner.compute(
             strategy_keys=selected_strategy_keys,
-            replace=replace
+            replace=replace,
+            easy_base=False,
         )
 
         # Adjust figure size based on number of subplots

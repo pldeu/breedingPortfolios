@@ -266,9 +266,16 @@ def _render_performance_bar(ax, sd):
 
     ax.bar(strat_names, gains, edgecolor='k', alpha=0.6, color=bar_colors, label='Economic Gain')
     ax.set_xlabel("Strategy")
-    ax.set_ylabel("Gain % (Normalized)")
+    if sd.get('easy_base', False):
+        ax.set_ylabel("Raw mean-variance utility gain")
+        lo = min([0.0] + list(gains))
+        hi = max([0.0] + list(gains))
+        pad = max((hi - lo) * 0.08, 0.01)
+        ax.set_ylim(lo - pad, hi + pad)
+    else:
+        ax.set_ylabel("Gain % (Normalized)")
+        ax.set_ylim(0, max(105, 1.05 * max(gains, default=0)))
     ax.axhline(0, color='k', linewidth=0.8)
-    ax.set_ylim(0, 1.05 * 100)
 
     for i, (name, gain) in enumerate(zip(strat_names, gains)):
         if gain < 0:

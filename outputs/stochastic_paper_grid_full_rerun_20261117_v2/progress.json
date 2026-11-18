@@ -1,0 +1,34 @@
+{
+  "completed": 329660,
+  "total": 777924,
+  "succeeded": 329657,
+  "errors": 3,
+  "fraction": 0.42376890287483093,
+  "elapsed_seconds": 36871.46995520592,
+  "scenarios_per_second": 7.5365442797698545,
+  "estimated_remaining_seconds": 59478.71907331098,
+  "workers": 12,
+  "conditions": [
+    {
+      "condition": "deterministic",
+      "sigma": 0.0,
+      "breeding_sd": 0.0
+    },
+    {
+      "condition": "yield_noise_only",
+      "sigma": 0.1,
+      "breeding_sd": 0.0
+    },
+    {
+      "condition": "breeding_only_known",
+      "sigma": 0.0,
+      "breeding_sd": 0.05
+    },
+    {
+      "condition": "both_known",
+      "sigma": 0.1,
+      "breeding_sd": 0.05
+    }
+  ],
+  "updated_unix": 1795002230.2661576
+}

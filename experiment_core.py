@@ -18,7 +18,6 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 
 from GurobiPortfolioOptimizer import GurobiPortfolioOptimizer
-import stochastic_core as stc
 
 # ---------------------------------------------------------------------------
 # Strategy registry (metadata only — callables resolved in _build_strategy_map)
@@ -32,14 +31,15 @@ STRATEGY_REGISTRY = {
     'Clairvoyance': {'label': 'Hindsight (Clairvoyance)', 'group': 'benchmark'}
 }
 
-DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'PoB', 'BeatBestS', 'MaxAdoption', 'Clairvoyance']
+DEFAULT_STRATEGY_KEYS = ['Base', 'BeatBest', 'PoB', 'BeatBestS', 'MaxMarket', 'Clairvoyance']
 
 
 # ---------------------------------------------------------------------------
 class ExperimentRunner:
 # ---------------------------------------------------------------------------
 
-    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=401, stochastic=None):
+    def __init__(self, p, c, gamma, r_g, R, scenario_pairs, replace=False, n=401,
+                 sigma=0.0, breeding_sd=0.0, breeding_timing='unknown', random_state=42):
         self.p = p
         self.c = c
         self.beta1 = np.array([1.0, c])
@@ -49,6 +49,21 @@ class ExperimentRunner:
         self.r_g = r_g
         self.R = R
         self.G = np.array([[1.0, r_g], [r_g, 1.0]])
+        self.sigma = float(sigma)
+        self.breeding_sd = float(breeding_sd)
+        self.breeding_timing = breeding_timing
+        self.random_state = int(random_state)
+        self.yield_noise_var = self.sigma ** 2
+        S_breeding = self.breeding_sd ** 2 * self.G
+        tau2 = float(
+            self.p * (self.beta1 @ S_breeding @ self.beta1)
+            + (1 - self.p) * (self.beta2 @ S_breeding @ self.beta2)
+        )
+        self.candidate_breeding_var = tau2 if breeding_timing == 'unknown' else 0.0
+        rng = np.random.default_rng(random_state)
+        self.known_eta = (rng.multivariate_normal(np.zeros(2), S_breeding)
+                          if breeding_timing == 'known' and self.breeding_sd > 0
+                          else np.zeros(2))
         self.eps = 1e-12
         self.Ginv = np.linalg.inv(self.G + self.eps * np.eye(2))
         self.lim = 1.2
@@ -59,12 +74,6 @@ class ExperimentRunner:
         self.X, self.Y = np.meshgrid(self.x, self.y)
         self.replace = replace
         self.grid_dict = None
-
-        # Stochastic extension (farm-level risk). stochastic: None, dict or stc.StochasticSpec.
-        # Inactive (sigma = breeding_sd = 0) reproduces the deterministic model exactly.
-        self.spec = stc.StochasticSpec.from_any(stochastic)
-        self.sigma2 = self.spec.sigma ** 2
-        self.tau2_c = self.spec.tau2(p, c, self.G) if self.spec.timing == 'unknown' else 0.0
 
     # ------------------------------------------------------------------
     # Core grid / portfolio math  (unchanged from GUI version)
@@ -96,16 +105,15 @@ class ExperimentRunner:
         yc_1 = c * X_flat + Y_flat
         mu_c = p * yc_0 + (1 - p) * yc_1
 
-        sig2 = grid.get('sigma2', 0.0)
-        tau2 = grid.get('tau2_c', 0.0)
-        v_ff = (p * yf[0] ** 2 + (1 - p) * yf[1] ** 2) - mu_f ** 2 + sig2
-        v_cc = (p * yc_0 ** 2 + (1 - p) * yc_1 ** 2) - mu_c ** 2 + sig2 + tau2
+        v_ff = (p * yf[0] ** 2 + (1 - p) * yf[1] ** 2) - mu_f ** 2 + grid.get('sigma', 0.0) ** 2
+        v_cc = ((p * yc_0 ** 2 + (1 - p) * yc_1 ** 2) - mu_c ** 2
+                + grid.get('sigma', 0.0) ** 2 + grid.get('candidate_breeding_var', 0.0))
         v_fc = (p * yf[0] * yc_0 + (1 - p) * yf[1] * yc_1) - mu_f * mu_c
 
         util_pure_c = mu_c - 0.5 * gamma * v_cc
         util_pure_f = mu_f - 0.5 * gamma * v_ff
         if has_mutable:
-            v_mm = (p * ym[0] ** 2 + (1 - p) * ym[1] ** 2) - mu_m ** 2 + sig2
+            v_mm = (p * ym[0] ** 2 + (1 - p) * ym[1] ** 2) - mu_m ** 2 + grid.get('sigma', 0.0) ** 2
             util_pure_m = mu_m - 0.5 * gamma * v_mm
 
         def solve_2_asset(m1, m2, v11, v22, v12):
@@ -245,9 +253,11 @@ class ExperimentRunner:
             U_fix = self.get_mean_yield(g_fixed)
             Var_fix = self.get_variance(g_fixed)
 
-            U_grid = self.beta[0] * self.X + self.beta[1] * self.Y
-            Var_grid = self.var_y_grid()
-            Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed)
+            candidate_x = self.X + self.known_eta[0]
+            candidate_y = self.Y + self.known_eta[1]
+            U_grid = self.beta[0] * candidate_x + self.beta[1] * candidate_y
+            Var_grid = self.var_y_grid(candidate_x, candidate_y) + self.candidate_breeding_var
+            Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed, candidate_x, candidate_y)
 
             Delta_mu = U_fix - U_grid
             Var_diff = Var_fix + Var_grid - 2 * Cov_grid_fix
@@ -263,14 +273,16 @@ class ExperimentRunner:
             feasible_mask = (d2 <= self.R ** 2)
 
             grid_dict = {
-                'X': self.X, 'Y': self.Y, 'U_grid': U_grid, 'Var_grid': Var_grid,
+                'X': candidate_x, 'Y': candidate_y, 'U_grid': U_grid, 'Var_grid': Var_grid,
                 'feasible_mask': feasible_mask, 'g_fixed': g_fixed, 'g_mutable': g_mutable,
                 'U_fix': U_fix, 'Cov_grid_fix': Cov_grid_fix,
                 'w_fix_grid': w_fix_grid, 'w_new_grid': w_new_grid,
                 'p': self.p, 'beta': self.beta, 'r_g': self.r_g,
                 'gamma': self.gamma, 'c': self.c, 'Ginv': self.Ginv,
-                'R': self.R, 'replace': self.replace,
-                'sigma2': self.sigma2, 'tau2_c': self.tau2_c,
+                'R': self.R, 'replace': self.replace, 'sigma': self.sigma,
+                'candidate_breeding_var': self.candidate_breeding_var,
+                'breeding_timing': self.breeding_timing, 'breeding_sd': self.breeding_sd,
+                'known_eta': self.known_eta,
             }
             grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
             grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
@@ -308,7 +320,8 @@ class ExperimentRunner:
             if noBreed:
                 g_fixed = grid["g_fixed"]
                 g_mutable = grid["g_mutable"]
-                opt_result = self._get_standard_output([g_fixed, g_mutable])
+                no_breed_assets = [g_fixed] if self.replace else [g_fixed, g_mutable]
+                opt_result = self._get_standard_output(no_breed_assets)
             else:
                 opt_result = grid['optimizer'].change_gamma_B4P(gamma_v)
             if opt_result is None:
@@ -361,7 +374,7 @@ class ExperimentRunner:
         y_env2 = self.c * g0 + 1.0 * g1
         mean_y = self.p * y_env1 + (1 - self.p) * y_env2
         exp_sq_y = self.p * (y_env1 ** 2) + (1 - self.p) * (y_env2 ** 2)
-        var_y = exp_sq_y - mean_y ** 2 + self.sigma2
+        var_y = exp_sq_y - mean_y ** 2 + self.yield_noise_var
         mv_score = mean_y - 0.5 * self.gamma * var_y
         return mean_y, var_y, mv_score, y_env1, y_env2
 
@@ -387,13 +400,17 @@ class ExperimentRunner:
         expected_product = self.p * (ya_1 * yb_1) + (1 - self.p) * (ya_2 * yb_2)
         return expected_product - (mu_a * mu_b)
 
-    def var_y_grid(self):
-        _, var_grid, _, _, _ = self._get_yields_and_stats(self.X, self.Y)
+    def var_y_grid(self, X=None, Y=None):
+        X = self.X if X is None else X
+        Y = self.Y if Y is None else Y
+        _, var_grid, _, _, _ = self._get_yields_and_stats(X, Y)
         return var_grid
 
-    def cov_y_grid_with_fixed(self, g_fixed):
-        yg_1 = 1.0 * self.X + self.c * self.Y
-        yg_2 = self.c * self.X + 1.0 * self.Y
+    def cov_y_grid_with_fixed(self, g_fixed, X=None, Y=None):
+        X = self.X if X is None else X
+        Y = self.Y if Y is None else Y
+        yg_1 = 1.0 * X + self.c * Y
+        yg_2 = self.c * X + 1.0 * Y
         mu_grid = self.p * yg_1 + (1 - self.p) * yg_2
         yf_1 = 1.0 * g_fixed[0] + self.c * g_fixed[1]
         yf_2 = self.c * g_fixed[0] + 1.0 * g_fixed[1]
@@ -418,8 +435,18 @@ class ExperimentRunner:
         return ellipse[:, 0], ellipse[:, 1]
 
     def calculate_stats_from_dict(self, data_dict):
-        if data_dict.get('stochastic'):
-            return data_dict
+        if data_dict.get('full_information', False):
+            result = {
+                'mean_variance': float(data_dict['mean_variance']),
+                'mean': float(data_dict['mean']),
+                'variance': float(data_dict['variance']),
+                'weights': data_dict['weights'],
+                'genotypes': data_dict['genotypes'],
+            }
+            for key in ('full_information_policy', 'solver_certificate', 'target'):
+                if key in data_dict:
+                    result[key] = data_dict[key]
+            return result
         gs = data_dict['genotypes']
         w_env1 = data_dict['weights']['env_1']
         w_env2 = data_dict['weights']['env_2']
@@ -439,15 +466,24 @@ class ExperimentRunner:
         mean = self.p * Y1_total + (1 - self.p) * Y2_total
         expected_sq = self.p * (Y1_total ** 2) + (1 - self.p) * (Y2_total ** 2)
         variance = expected_sq - mean ** 2
+        variance += self.yield_noise_var * (
+            self.p * sum(float(w) ** 2 for w in w_env1)
+            + (1 - self.p) * sum(float(w) ** 2 for w in w_env2)
+        )
+        if gs and self.breeding_timing == 'unknown':
+            variance += self.candidate_breeding_var * (
+                self.p * float(w_env1[-1]) ** 2 + (1 - self.p) * float(w_env2[-1]) ** 2
+            )
         mean_variance = mean - 0.5 * self.gamma * variance
         return {
             'mean_variance': mean_variance, 'mean': mean, 'variance': variance,
-            'weights': data_dict['weights'], 'genotypes': data_dict['genotypes']
+            'weights': data_dict['weights'], 'genotypes': data_dict['genotypes'],
+            **({'solver_certificate': data_dict['solver_certificate']}
+               if 'solver_certificate' in data_dict else {}),
         }
 
-    def _get_standard_output(self, g_list, extra_var=None):
-        """Generalized portfolio optimization for arbitrary genotypes using Gurobi.
-        Adds the farm-level idiosyncratic variance sigma^2 (and optional per-asset extra_var)."""
+    def _get_standard_output(self, g_list, candidate_is_new=False):
+        """Generalized portfolio optimization for arbitrary genotypes using Gurobi."""
         def get_y_vec(g):
             return np.array([g[0] + self.c * g[1], self.c * g[0] + g[1]])
 
@@ -455,9 +491,9 @@ class ExperimentRunner:
         probs = np.array([self.p, 1.0 - self.p])
         y_bar = Y.T @ probs
         Sigma = (Y.T * probs) @ Y - np.outer(y_bar, y_bar)
-        Sigma = Sigma + self.sigma2 * np.eye(len(g_list))
-        if extra_var is not None:
-            Sigma = Sigma + np.diag(extra_var)
+        Sigma += np.eye(len(g_list)) * self.yield_noise_var
+        if candidate_is_new and len(g_list) and self.breeding_timing == 'unknown':
+            Sigma[-1, -1] += self.candidate_breeding_var
 
         m = gp.Model()
         m.setParam('OutputFlag', 0)
@@ -531,20 +567,20 @@ class ExperimentRunner:
             g_list = [grid['g_fixed'], g_cand]
         else:
             g_list = [grid['g_fixed'], grid['g_mutable'], g_cand]
-        return self._get_standard_output(g_list)
+        return self._get_standard_output(g_list, candidate_is_new=True)
 
     # ------------------------------------------------------------------
     # Strategy methods  (moved from closures inside run())
     # ------------------------------------------------------------------
 
     def _strat_base(self, grid):
-        details = self._get_standard_output([grid["g_fixed"], grid["g_mutable"]])
+        assets = ([grid["g_fixed"]] if self.replace else
+                  [grid["g_fixed"], grid["g_mutable"]])
+        details = self._get_standard_output(assets)
         return None, details
 
     def _strat_B4P(self, grid):
-        """Maximize Portfolio Utility (E[V] over breeding outcomes when they are known before adoption)."""
-        if self.spec.mc_targets:
-            return None, self._mc_strategy(grid, 'mv')
+        """Maximize Portfolio Utility."""
         return None, grid['optimizer'].strat_B4P()
 
     def _strat_B4M(self, grid):
@@ -556,13 +592,9 @@ class ExperimentRunner:
         return None, grid['optimizer'].strat_max_share()
 
     def _strat_max_investability(self, grid):
-        if self.spec.mc_targets:
-            return None, self._mc_strategy(grid, 'share')
         return None, grid['optimizer'].strat_max_investability(min_improvement=1e-4)
 
     def _strat_max_investability3(self, grid):
-        if self.spec.mc_targets:
-            return None, self._mc_strategy(grid, 'share')
         return None, grid['optimizer'].strat_max_investability(min_improvement=1e-3)
 
     def _strat_BB(self, grid):
@@ -665,49 +697,80 @@ class ExperimentRunner:
         return idx, details
 
     def _strat_hindsight_optimized(self, grid):
-        """Hindsight Portfolio – fully optimized via Gurobi.
-        Stochastic mode: full information (environment, every farm-level shock, breeding outcome)."""
-        if self.spec.active:
-            if 'clairvoyance' not in grid:
-                grid['clairvoyance'] = stc.clairvoyance_full_info(
-                    *self._stochastic_search_args(grid), project=self._projector(grid))
-            return None, grid['clairvoyance']
+        """Optimize the hindsight policy for the information actually observed."""
+        if self.breeding_timing == 'known':
+            # The realized breeding outcome is already incorporated into the
+            # candidate genotype/ellipse. Yield noise is risk, not an observed
+            # shock, so optimize over environment-contingent weights with its
+            # analytic variance penalty.
+            return None, grid['optimizer'].strat_hindsight()
+        if self.sigma > 0 or self.breeding_sd > 0:
+            return None, grid['optimizer'].strat_hindsight_full_information(
+                grid['clairvoyance_states']
+            )
         return None, grid['optimizer'].strat_hindsight()
 
-    # ------------------------------------------------------------------
-    # Stochastic helpers (see stochastic_core.py)
-    # ------------------------------------------------------------------
+    def _make_clairvoyance_states(self, seed, base_draws=32, condition_on_eta=False):
+        """Antithetic Monte Carlo states paired over the two environment states.
 
-    def _existing_genotypes(self, grid):
-        return [grid['g_fixed']] if self.replace else [grid['g_fixed'], grid['g_mutable']]
+        Each shock vector contains one persistent candidate-genotype shock and
+        one independent yield shock per available variety. Pairing both
+        environments with each shock vector gives the product distribution
+        over environment and shocks with exact environment probabilities.
+        """
+        rng = np.random.default_rng(seed)
+        try:
+            root_g = np.linalg.cholesky(self.G)
+        except np.linalg.LinAlgError:
+            values, vectors = np.linalg.eigh(self.G)
+            root_g = vectors @ np.diag(np.sqrt(np.clip(values, 0.0, None)))
+        asset_count = 2 if self.replace else 3
+        states = []
+        for _ in range(base_draws):
+            z_eta = rng.standard_normal(2)
+            z_eps = rng.standard_normal(asset_count)
+            eta = (self.known_eta.copy() if condition_on_eta
+                   else self.breeding_sd * (root_g @ z_eta))
+            eps = self.sigma * z_eps
+            for sign in (1.0, -1.0):
+                for env, env_prob in ((0, self.p), (1, 1.0 - self.p)):
+                    states.append({
+                        'env': env,
+                        'prob': float(env_prob / (2 * base_draws)),
+                        'eta': (eta if condition_on_eta else sign * eta).tolist(),
+                        'eps': (sign * eps).tolist(),
+                    })
+        return states
 
-    def _projector(self, grid):
-        return stc.EllipseProjector(grid['g_mutable'], self.G, self.R)
-
-    def _stochastic_search_args(self, grid):
-        """(pts, g_existing, p, c, gamma, spec, G, h) for the Monte Carlo searches."""
-        mask = grid['feasible_mask']
-        pts = np.c_[grid['X'][mask], grid['Y'][mask]]
-        pts = pts[np.all(np.abs(pts) <= 1.0, axis=1)]   # same box as the Gurobi models
-        if len(pts) == 0:
-            pts = np.asarray(grid['g_mutable'], float)[None]
-        h = 3 * abs(self.x[1] - self.x[0]) * max(1.0, np.sqrt(len(pts) / self.spec.max_targets))
-        return (pts, self._existing_genotypes(grid), self.p, self.c, self.gamma,
-                self.spec, self.G, h)
-
-    def _mc_strategy(self, grid, objective):
-        """Target maximizing E[V] ('mv') or E[w_c] ('share') when eta is known before adoption."""
-        t = stc.mc_target(*self._stochastic_search_args(grid), objective=objective,
-                          project=self._projector(grid))
-        g_list = self._existing_genotypes(grid) + [t]
-        return {"genotypes": [list(map(float, g)) for g in g_list],
-                "weights": {"env_1": [0.0] * len(g_list), "env_2": [0.0] * len(g_list)}}
-
-    def _evaluate_stochastic(self, name, genotypes):
-        """Farm-level evaluation of a strategy's genotypes under self.spec."""
-        n_existing = len(genotypes) if name == 'Base' else (1 if self.replace else 2)
-        return stc.evaluate_genotypes(genotypes, n_existing, self.p, self.c, self.gamma,
-                                      self.spec, self.G)
+    def _evaluate_policy_on_states(self, policy, states, candidate_is_new=False):
+        """Evaluate a fixed ordinary policy on the common Clairvoyance states."""
+        genotypes = [np.asarray(g, dtype=float) for g in policy['genotypes']]
+        weights_by_env = policy['weights']
+        probabilities = np.asarray([float(s['prob']) for s in states], dtype=float)
+        returns = []
+        for state in states:
+            env = int(state['env'])
+            beta = np.asarray([1.0, self.c]) if env == 0 else np.asarray([self.c, 1.0])
+            eps = np.asarray(state['eps'], dtype=float)
+            weights = np.asarray(weights_by_env['env_1' if env == 0 else 'env_2'], dtype=float)
+            total = 0.0
+            for i, (genotype, weight) in enumerate(zip(genotypes, weights)):
+                realized = genotype.copy()
+                if candidate_is_new and i == len(genotypes) - 1:
+                    if self.breeding_timing == 'unknown':
+                        realized += np.asarray(state['eta'], dtype=float)
+                total += float(weight) * (float(beta @ realized) + float(eps[i]))
+            returns.append(total)
+        returns = np.asarray(returns, dtype=float)
+        mean = float(probabilities @ returns)
+        variance = float(probabilities @ ((returns - mean) ** 2))
+        return {
+            'mean_variance': float(mean - 0.5 * self.gamma * variance),
+            'mean': mean,
+            'variance': variance,
+            'weights': weights_by_env,
+            'genotypes': policy['genotypes'],
+        }
 
     def _calculate_split_mv(self, y1, y2):
         """Helper: compute global Mean-Variance from environment-specific yields."""
@@ -975,6 +1038,8 @@ class ExperimentRunner:
             'BeatBest':         self._strat_B4M,
             'PoB':          self._strat_B4P,
             'BeatBestS':     self._strat_BB,
+            # MaxMarket is the global investability MPEC route, not the
+            # approximate strat_max_share binary-search helper.
             'MaxMarket':        self._strat_max_investability,
             'Adopt3':       self._strat_max_investability3,
             'Clairvoyance':       self._strat_hindsight_optimized,
@@ -1001,6 +1066,13 @@ class ExperimentRunner:
             One dict per scenario, containing all data needed by build_figure().
         """
         self.replace = replace
+        stochastic_active = self.sigma > 0 or self.breeding_sd > 0
+        # In known-eta runs, the ordinary strategies still optimize around the
+        # single seeded realization. Do not normalize those conditional values
+        # by Clairvoyance's unconditional eta-sample value.
+        raw_gain_mode = easy_base or (
+            self.breeding_timing == 'known' and self.breeding_sd > 0
+        )
         output_buffer = io.StringIO()
         scenario_data_list = []
 
@@ -1021,11 +1093,28 @@ class ExperimentRunner:
 
                 U_fix = self.get_mean_yield(g_fixed)
                 Var_fix = self.get_variance(g_fixed)
-                base_line = self._get_standard_output([g_fixed, g_mutable])
+                if stochastic_active and self.breeding_timing != 'known':
+                    clairvoyance_states = self._make_clairvoyance_states(
+                        self.random_state + 1009 * id,
+                        # The breeding target is chosen before eta in both
+                        # timing modes. Clairvoyance observes eta before
+                        # adoption, so eta must vary across its outcome states.
+                        condition_on_eta=False,
+                    )
+                else:
+                    clairvoyance_states = None
+                base_assets = [g_fixed] if self.replace else [g_fixed, g_mutable]
+                base_line = self._get_standard_output(base_assets)
+                if stochastic_active and self.breeding_timing != 'known':
+                    base_line = self._evaluate_policy_on_states(
+                        base_line, clairvoyance_states, candidate_is_new=False
+                    )
 
-                U_grid = self.beta[0] * self.X + self.beta[1] * self.Y
-                Var_grid = self.var_y_grid()
-                Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed)
+                candidate_x = self.X + self.known_eta[0]
+                candidate_y = self.Y + self.known_eta[1]
+                U_grid = self.beta[0] * candidate_x + self.beta[1] * candidate_y
+                Var_grid = self.var_y_grid(candidate_x, candidate_y) + self.candidate_breeding_var
+                Cov_grid_fix = self.cov_y_grid_with_fixed(g_fixed, candidate_x, candidate_y)
 
                 Delta_mu = U_fix - U_grid
                 Var_diff = Var_fix + Var_grid - 2 * Cov_grid_fix
@@ -1045,35 +1134,56 @@ class ExperimentRunner:
                     continue
 
                 grid_dict = {
-                    'X': self.X, 'Y': self.Y, 'U_grid': U_grid, 'Var_grid': Var_grid,
+                    'X': candidate_x, 'Y': candidate_y, 'U_grid': U_grid, 'Var_grid': Var_grid,
                     'feasible_mask': feasible_mask, 'g_fixed': g_fixed, 'g_mutable': g_mutable,
                     'U_fix': U_fix, 'Cov_grid_fix': Cov_grid_fix,
                     'w_fix_grid': w_fix_grid, 'w_new_grid': w_new_grid,
                     'p': self.p, 'beta': self.beta, 'r_g': self.r_g,
                     'gamma': self.gamma, 'c': self.c, 'Ginv': self.Ginv,
-                    'R': self.R, 'replace': self.replace,
-                    'sigma2': self.sigma2, 'tau2_c': self.tau2_c,
+                    'R': self.R, 'replace': self.replace, 'sigma': self.sigma,
+                    'candidate_breeding_var': self.candidate_breeding_var,
+                    'breeding_timing': self.breeding_timing, 'breeding_sd': self.breeding_sd,
+                    'known_eta': self.known_eta,
                 }
+                if stochastic_active:
+                    grid_dict['clairvoyance_states'] = clairvoyance_states
                 grid_dict['stats'] = self.get_exact_grid_stats(grid_dict)
                 grid_dict['optimizer'] = GurobiPortfolioOptimizer(grid_dict)
                 self.grid_dict = grid_dict
 
-                if not easy_base:
+                clairvoyance_result = None
+                if not raw_gain_mode:
+                    clairvoyance_result = self._strat_hindsight_optimized(grid_dict)[1]
                     best_possible_value = self.calculate_stats_from_dict(
-                        self._strat_hindsight_optimized(grid_dict)[1]
+                        clairvoyance_result
                     )['mean_variance']
                 else:
                     best_possible_value = None
 
                 details_per_strategy = {}
                 for name, strat_func in strategies.items():
-                    idx, strat_dict = strat_func(grid_dict)
-                    if 'Clairv' in name:
-                        out_dict = self.calculate_stats_from_dict(strat_dict)
-                    elif self.spec.active:
-                        out_dict = self._evaluate_stochastic(name, strat_dict['genotypes'])
+                    if name == 'Clairvoyance' and clairvoyance_result is not None:
+                        idx, strat_dict = None, clairvoyance_result
                     else:
-                        out_dict = self._get_standard_output(strat_dict['genotypes'])
+                        idx, strat_dict = strat_func(grid_dict)
+                    if name in {'MaxMarket', 'Adopt3'}:
+                        # MaxMarket optimizes investable share subject to the
+                        # utility-optimality KKT system. Its selected weights
+                        # are part of the policy and must be preserved when
+                        # scoring it; re-optimizing them would turn it into a
+                        # different strategy.
+                        out_dict = self.calculate_stats_from_dict(strat_dict)
+                    elif 'Clairv' not in name:
+                        out_dict = self._get_standard_output(
+                            strat_dict['genotypes'], candidate_is_new=(name != 'Base')
+                        )
+                        if stochastic_active and self.breeding_timing != 'known':
+                            out_dict = self._evaluate_policy_on_states(
+                                out_dict, clairvoyance_states,
+                                candidate_is_new=(name != 'Base'),
+                            )
+                    else:
+                        out_dict = self.calculate_stats_from_dict(strat_dict)
                     gain = out_dict['mean_variance'] - base_line['mean_variance']
                     details_per_strategy[name] = {
                         'name': name,
@@ -1090,7 +1200,7 @@ class ExperimentRunner:
                 # Ellipse
                 theta = np.linspace(0, 2 * np.pi, 300)
                 circle = np.vstack([np.cos(theta), np.sin(theta)]) * self.R
-                ellipse_pts = (S @ circle).T + g_mutable.reshape(1, 2)
+                ellipse_pts = (S @ circle).T + g_mutable.reshape(1, 2) + self.known_eta.reshape(1, 2)
 
                 # Plot styles
                 marker_cycle = ['D', 'o', 's', '^', 'v', 'P', 'X', '*', 'h', 'H']
@@ -1110,13 +1220,13 @@ class ExperimentRunner:
                     if name == "Base":
                         continue
                     mv = res['stats']['mean_variance']
-                    if easy_base:
+                    if raw_gain_mode:
                         gain_val = mv - base_line['mean_variance']
                     else:
                         denom = (best_possible_value - base_line['mean_variance'])
                         gain_val = (mv - base_line['mean_variance']) / denom if abs(denom) > 0.0001 else 0
                     gain_val = np.round(gain_val, 4)
-                    gains.append(gain_val * 100)
+                    gains.append(gain_val if raw_gain_mode else gain_val * 100)
                     if type(res['out_dict']['weights']) == list:
                         adaptions1.append(res['out_dict']['weights'][-1])
                         adaptions2.append(res['out_dict']['weights'][-1])
@@ -1132,7 +1242,9 @@ class ExperimentRunner:
                 NAME_W = 22
                 NUM_W = 8
                 EXTRA_W = 45
-                SEP = " │ "
+                # Keep report text compatible with the Windows cp1252 stdout
+                # used by some Streamlit launches.
+                SEP = " | "
 
                 def fmt_w(w_list):
                     return ", ".join(f"{x:.2f}" for x in w_list)
@@ -1164,7 +1276,7 @@ class ExperimentRunner:
                     total_width = NAME_W + len(SEP) * num_cols + NUM_W * num_cols
                     if has_extra:
                         total_width += len(SEP) + EXTRA_W
-                    return "─" * total_width
+                    return "-" * total_width
 
                 # --- Table 1: Strategy comparison ---
                 header1 = make_header("Strategy", ["MV", "Gain", "Mean", "Var"],
@@ -1216,21 +1328,6 @@ class ExperimentRunner:
 
                 print(sep2)
 
-                if self.spec.active:
-                    sp = self.spec
-                    print()
-                    print(f"Stochastic model (farm level): sigma={sp.sigma:.3f}, breeding_sd={sp.breeding_sd:.3f}, "
-                          f"timing={sp.timing}" + (f", tau2={self.tau2_c:.5f}" if sp.timing == 'unknown' else "")
-                          + f", draws={sp.n_draws}, seed={sp.seed}")
-                    print("Clairvoyance sees environment, all farm-level shocks and the breeding outcome.")
-                    header3 = make_header("Strategy", ["E[MV]", "Gain", "sd(MV)", "P(adopt)", "E[w_c]"])
-                    print(header3)
-                    print(make_separator(["E[MV]", "Gain", "sd(MV)", "P(adopt)", "E[w_c]"]))
-                    for name, res in details_per_strategy.items():
-                        d = res['out_dict']
-                        print(make_row(name, [d['mean_variance'], res['stats']['gain'], d.get('mv_sd', 0.0),
-                                              d.get('p_adopt', float('nan')), d.get('e_wc', 0.0)]))
-
                 scenario_data_list.append({
                     'grid_dict': grid_dict,
                     'details_per_strategy': details_per_strategy,
@@ -1248,17 +1345,16 @@ class ExperimentRunner:
                     'w_new_grid': w_new_grid,
                     'base_line': base_line,
                     'label': label,
-                    'easy_base': easy_base,
+                    'easy_base': raw_gain_mode,
                     'best_possible_value': best_possible_value,
                     'S': S,
                     # Convenience copies so render functions don't need self
-                    'X': self.X,
-                    'Y': self.Y,
+                    'X': candidate_x,
+                    'Y': candidate_y,
                     'beta1': self.beta1,
                     'beta2': self.beta2,
                     'p': self.p,
                     'c': self.c,
-                    'stochastic': self.spec.to_dict() if self.spec.active else None,
                 })
 
         text_report = output_buffer.getvalue()
